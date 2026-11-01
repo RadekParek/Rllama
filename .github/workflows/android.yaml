@@ -117,6 +117,14 @@ jobs:
           echo "ANDROID_NDK_HOME=$ndk" >>"$GITHUB_ENV"
           echo "ndk=$ndk" >>"$GITHUB_OUTPUT"
 
+      - name: Cache the llama.cpp Android build tree
+        uses: actions/cache@v4
+        with:
+          path: build/android-arm64
+          key: llama-android-arm64-${{ hashFiles('LLAMA_CPP_VERSION', 'llama/server/CMakeLists.txt', 'llama/compat/compat.cmake', 'scripts/build_android.sh') }}
+          restore-keys: |
+            llama-android-arm64-
+
       - name: Build native payload
         run: ./scripts/build_android.sh -a arm64-v8a
 
@@ -223,10 +231,34 @@ jobs:
 
       - name: Build debug and release APKs
         working-directory: android
+        shell: bash
         env:
           OLLAMA_VERSION: ${{ needs.native-payload.outputs.version }}
           OLLAMA_VERSION_CODE: ${{ needs.native-payload.outputs.version_code }}
-        run: gradle --no-daemon assembleDebug assembleRelease
+        run: |
+          log="$RUNNER_TEMP/gradle-build.log"
+          if gradle --no-daemon --stacktrace assembleDebug assembleRelease >"$log" 2>&1; then
+            tail -n 20 "$log"
+            exit 0
+          fi
+          # Surface the useful lines as check-run annotations so a failure is
+          # diagnosable even when the raw log is not easily reachable.
+          echo "::error::Gradle build failed"
+          grep -nE "error:|FAILURE:|What went wrong|Execution failed|Could not (resolve|find|create|download)|Unsupported|> Task .* FAILED|Caused by|Cannot|not found" "$log" \
+            | head -n 20 \
+            | while IFS= read -r line; do echo "::error::${line}"; done || true
+          echo "----- last 80 log lines -----"
+          tail -n 80 "$log"
+          exit 1
+
+      - name: Upload gradle log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: ${{ runner.temp }}/gradle-build.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Rename artifacts
         shell: bash
