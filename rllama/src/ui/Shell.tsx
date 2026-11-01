@@ -1,138 +1,30 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { Message, ModelInfo, Provider, Skill, Thread } from '../core/types';
+import type { Effort, Message, ModelInfo, Provider, Skill } from '../core/types';
+import { EFFORT_LABELS } from '../core/settings';
 import { Markdown } from './Markdown';
+import { ModelLogo } from './ModelLogo';
 import {
   IconArrowUp,
   IconBolt,
-  IconChart,
   IconChevron,
   IconMenu,
   IconPlus,
   IconRefresh,
   IconSearch,
   IconSliders,
-  IconStack,
-  IconTrash,
   IconX,
 } from './Icons';
 
-export type PanelId = 'providers' | 'skills' | 'catalog' | 'usage' | null;
-
-/* ------------------------------------------------------------------ sidebar */
-
-export interface SidebarProps {
-  threads: Thread[];
-  activeThreadId: string;
-  providerCount: number;
-  enabledProviderCount: number;
-  modelCount: number;
-  activePanel: PanelId;
-  open: boolean;
-  onClose: () => void;
-  onNew: () => void;
-  onSelect: (threadId: string) => void;
-  onDelete: (threadId: string) => void;
-  onOpenPanel: (panel: PanelId) => void;
-}
-
-export function Sidebar(props: SidebarProps): React.ReactElement {
-  const { threads, activeThreadId } = props;
-  return (
-    <>
-      {props.open ? <div className="sidebar-scrim" onClick={props.onClose} role="presentation" /> : null}
-      <aside className={`sidebar ${props.open ? 'open' : ''}`}>
-        <div className="brand">
-          <span className="brand-mark">
-            <img src="./icons/icon-192.png" alt="" />
-          </span>
-          <div>
-            <div className="brand-name">Rllama</div>
-            <div className="brand-sub">multi-provider workspace</div>
-          </div>
-          <button
-            className="icon-button mobile-only"
-            style={{ marginLeft: 'auto' }}
-            onClick={props.onClose}
-            aria-label="Close sidebar"
-          >
-            <IconX />
-          </button>
-        </div>
-
-        <div className="sidebar-actions">
-          <button className="nav-item new" onClick={props.onNew}>
-            <IconPlus className="icon" />
-            <span>New chat</span>
-            <span className="trailing">⌘K</span>
-          </button>
-        </div>
-
-        <div className="sidebar-scroll">
-          <div className="section-label">Recents</div>
-          {threads.map((thread) => (
-            <div
-              className={`thread-row ${thread.id === activeThreadId ? 'active' : ''}`}
-              key={thread.id}
-            >
-              <button
-                className="thread-button"
-                onClick={() => props.onSelect(thread.id)}
-                title={thread.title}
-              >
-                {thread.title || 'Untitled'}
-              </button>
-              {threads.length > 1 ? (
-                <button
-                  className="row-delete"
-                  onClick={() => props.onDelete(thread.id)}
-                  title="Delete chat"
-                  aria-label={`Delete ${thread.title}`}
-                >
-                  <IconTrash width={12} height={12} />
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-
-        <div className="sidebar-footer">
-          <button
-            className={`nav-item ${props.activePanel === 'providers' ? 'active' : ''}`}
-            onClick={() => props.onOpenPanel(props.activePanel === 'providers' ? null : 'providers')}
-          >
-            <IconSliders className="icon" />
-            <span>Providers</span>
-            <span className="trailing">
-              {props.enabledProviderCount}/{props.providerCount}
-            </span>
-          </button>
-          <button
-            className={`nav-item ${props.activePanel === 'catalog' ? 'active' : ''}`}
-            onClick={() => props.onOpenPanel(props.activePanel === 'catalog' ? null : 'catalog')}
-          >
-            <IconStack className="icon" />
-            <span>Models</span>
-            <span className="trailing">{props.modelCount}</span>
-          </button>
-          <button
-            className={`nav-item ${props.activePanel === 'skills' ? 'active' : ''}`}
-            onClick={() => props.onOpenPanel(props.activePanel === 'skills' ? null : 'skills')}
-          >
-            <IconBolt className="icon" />
-            <span>Skills</span>
-          </button>
-          <button
-            className={`nav-item ${props.activePanel === 'usage' ? 'active' : ''}`}
-            onClick={() => props.onOpenPanel(props.activePanel === 'usage' ? null : 'usage')}
-          >
-            <IconChart className="icon" />
-            <span>Usage</span>
-          </button>
-        </div>
-      </aside>
-    </>
-  );
-}
+export type PanelId =
+  | 'menu'
+  | 'providers'
+  | 'skills'
+  | 'catalog'
+  | 'usage'
+  | 'settings'
+  | 'mcp'
+  | 'cli'
+  | null;
 
 /* ------------------------------------------------------------------ top bar */
 
@@ -142,48 +34,52 @@ export interface TopBarProps {
   modelLabel: string;
   usageLabel: string;
   usageLevel: 'ok' | 'warn' | 'danger';
-  failover: boolean;
+  effort: Effort;
+  parallelCount: number;
   pickerOpen: boolean;
+  onOpenMenu: () => void;
   onTogglePicker: () => void;
+  onCycleEffort: () => void;
   onOpenPanel: (panel: PanelId) => void;
-  onOpenSidebar: () => void;
   picker: React.ReactNode;
 }
 
 export function TopBar(props: TopBarProps): React.ReactElement {
   return (
     <div className="topbar">
-      <button className="icon-button mobile-only" onClick={props.onOpenSidebar} aria-label="Chats">
+      <button className="icon-button" onClick={props.onOpenMenu} aria-label="Menu" title="Menu">
         <IconMenu />
       </button>
       <span className="topbar-title">{props.title}</span>
-      <div style={{ position: 'relative' }}>
-        <button className="pill" onClick={props.onTogglePicker} title="Provider and model" aria-expanded={props.pickerOpen}>
-          <span className="dot ok" />
+
+      <div className="picker-anchor">
+        <button className="pill" onClick={props.onTogglePicker} aria-expanded={props.pickerOpen} title="Provider and model">
+          {props.modelLabel ? <ModelLogo model={props.modelLabel} /> : <span className="dot ok" />}
           <span className="pill-label">
             {props.providerName ? `${props.providerName} · ${props.modelLabel || 'no model'}` : 'no provider'}
           </span>
-          <IconChevron width={12} height={12} />
+          <IconChevron width={11} height={11} />
         </button>
         {props.pickerOpen ? props.picker : null}
       </div>
+
+      <button className="pill hide-small" onClick={props.onCycleEffort} title="Reasoning effort">
+        <span className="pill-label">{EFFORT_LABELS[props.effort]}</span>
+      </button>
+
+      {props.parallelCount > 0 ? (
+        <span className="pill on hide-small" title="Several models answer at once">
+          {props.parallelCount + 1} models
+        </span>
+      ) : null}
+
       <span className="spacer" />
-      <span className="pill" title={props.failover ? 'Automatic failover is on' : 'Automatic failover is off'}>
+
+      <span className="pill hide-small" title="Tokens used with this provider">
         <span className={`dot ${props.usageLevel}`} />
         <span className="pill-label">{props.usageLabel}</span>
       </span>
-      <button className="icon-button" onClick={() => props.onOpenPanel('skills')} title="Skills" aria-label="Skills">
-        <IconBolt />
-      </button>
-      <button className="icon-button" onClick={() => props.onOpenPanel('usage')} title="Usage" aria-label="Usage">
-        <IconChart />
-      </button>
-      <button
-        className="icon-button"
-        onClick={() => props.onOpenPanel('providers')}
-        title="Providers"
-        aria-label="Providers"
-      >
+      <button className="icon-button" onClick={() => props.onOpenPanel('settings')} title="Settings" aria-label="Settings">
         <IconSliders />
       </button>
     </div>
@@ -198,7 +94,10 @@ export interface ModelPickerProps {
   status: Record<string, string>;
   activeProviderId?: string;
   activeModel: string;
+  parallel: Array<{ providerId: string; model: string }>;
+  showLogos: boolean;
   onPick: (providerId: string, model: string) => void;
+  onToggleParallel: (providerId: string, model: string) => void;
   onLoad: (providerId: string) => void;
   onOpenProviders: () => void;
   onClose: () => void;
@@ -228,17 +127,18 @@ export function ModelPicker(props: ModelPickerProps): React.ReactElement {
   }, [props]);
 
   const needle = query.trim().toLowerCase();
-  const groups = props.providers
-    .map((provider) => ({
-      provider,
-      models: (props.modelsByProvider[provider.id] ?? []).filter(
-        (model) => !needle || model.id.toLowerCase().includes(needle),
-      ),
-    }))
-    .filter((group) => group.models.length > 0 || (!needle && group.provider.enabled));
+  const groups = props.providers.map((provider) => ({
+    provider,
+    models: (props.modelsByProvider[provider.id] ?? []).filter(
+      (model) => !needle || model.id.toLowerCase().includes(needle),
+    ),
+  }));
+
+  const isParallel = (providerId: string, model: string) =>
+    props.parallel.some((target) => target.providerId === providerId && target.model === model);
 
   return (
-    <div className="popover" ref={ref} style={{ top: 36, left: 0, width: 360 }}>
+    <div className="popover model-popover" ref={ref}>
       <div className="popover-header">
         <IconSearch width={14} height={14} />
         <input
@@ -247,15 +147,12 @@ export function ModelPicker(props: ModelPickerProps): React.ReactElement {
           autoFocus
           placeholder="Search models from your keys…"
           onChange={(event) => setQuery(event.target.value)}
-          style={{ border: 'none', background: 'transparent', padding: 0 }}
         />
+        <button className="close-button" onClick={props.onClose} aria-label="Close model picker">
+          <IconX />
+        </button>
       </div>
       <div className="popover-body">
-        {groups.length === 0 ? (
-          <div className="hint" style={{ padding: 10 }}>
-            No models yet. Open Providers, paste a key, then press “Load models”.
-          </div>
-        ) : null}
         {groups.map(({ provider, models }) => (
           <div key={provider.id}>
             <div className="picker-group-label">
@@ -263,21 +160,27 @@ export function ModelPicker(props: ModelPickerProps): React.ReactElement {
               {provider.enabled ? '' : ' · disabled'}
               {models.length === 0 ? ` · ${props.status[provider.id] ?? 'no models loaded'}` : ''}
             </div>
-            {models.map((model) => (
-              <button
-                key={model.id}
-                className={`model-option ${
-                  provider.id === props.activeProviderId && model.id === props.activeModel ? 'active' : ''
-                }`}
-                onClick={() => {
-                  props.onPick(provider.id, model.id);
-                  props.onClose();
-                }}
-              >
-                <code>{model.id}</code>
-                {model.context ? <span className="trailing">{formatContext(model.context)}</span> : null}
-              </button>
-            ))}
+            {models.map((model) => {
+              const isActive = provider.id === props.activeProviderId && model.id === props.activeModel;
+              const inParallel = isParallel(provider.id, model.id);
+              return (
+                <div className={`model-row ${isActive ? 'active' : ''}`} key={model.id}>
+                  <button className="model-option" onClick={() => props.onPick(provider.id, model.id)}>
+                    {props.showLogos ? <ModelLogo model={model.id} /> : null}
+                    <code>{model.id}</code>
+                    {model.context ? <span className="trailing">{formatContext(model.context)}</span> : null}
+                  </button>
+                  <button
+                    className={`parallel-toggle ${inParallel ? 'on' : ''}`}
+                    onClick={() => props.onToggleParallel(provider.id, model.id)}
+                    title={inParallel ? 'Remove from parallel run' : 'Answer with this model too'}
+                    aria-label={inParallel ? 'Remove from parallel run' : 'Add to parallel run'}
+                  >
+                    <IconPlus width={12} height={12} />
+                  </button>
+                </div>
+              );
+            })}
             {models.length === 0 ? (
               <button className="model-option" onClick={() => props.onLoad(provider.id)}>
                 <IconRefresh width={13} height={13} />
@@ -287,11 +190,8 @@ export function ModelPicker(props: ModelPickerProps): React.ReactElement {
           </div>
         ))}
       </div>
-      <div className="popover-header" style={{ borderTop: '1px solid var(--border)', borderBottom: 'none' }}>
-        <button className="btn ghost tiny" onClick={props.onLoad.bind(null, props.activeProviderId ?? '')} disabled={!props.activeProviderId}>
-          <IconRefresh width={12} height={12} />
-          Reload {props.providers.find((provider) => provider.id === props.activeProviderId)?.name ?? ''}
-        </button>
+      <div className="popover-footer">
+        <span className="hint">+ adds a model to a parallel run</span>
         <span className="spacer" />
         <button className="btn ghost tiny" onClick={props.onOpenProviders}>
           Manage providers
@@ -317,23 +217,38 @@ export interface ThreadViewProps {
   messages: Message[];
   busy: boolean;
   emptyState: React.ReactNode;
+  showLogos: boolean;
   onRetry?: (message: Message) => void;
   onSwitchProtocol?: (message: Message) => void;
 }
 
 export function ThreadView(props: ThreadViewProps): React.ReactElement {
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const pinnedRef = useRef(true);
+
+  // Only follow the stream when the reader is already at the bottom. Yanking the
+  // viewport while someone scrolls back was one of the "it moves" complaints.
+  const onScroll = () => {
+    const node = scrollRef.current;
+    if (!node) {
+      return;
+    }
+    pinnedRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+  };
 
   useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end' });
-  }, [props.messages.length, props.busy]);
+    const node = scrollRef.current;
+    if (node && pinnedRef.current) {
+      node.scrollTop = node.scrollHeight;
+    }
+  }, [props.messages, props.busy]);
 
   if (props.messages.length === 0) {
     return <div className="scroll">{props.emptyState}</div>;
   }
 
   return (
-    <div className="scroll">
+    <div className="scroll" ref={scrollRef} onScroll={onScroll}>
       <div className="thread">
         {props.messages.map((message) => (
           <div className={`message ${message.role}`} key={message.id}>
@@ -343,6 +258,7 @@ export function ThreadView(props: ThreadViewProps): React.ReactElement {
               </div>
             ) : (
               <div className="meta">
+                {props.showLogos && message.model ? <ModelLogo model={message.model} size={13} /> : null}
                 <span className="who">{message.answeredBy ?? message.providerId ?? 'assistant'}</span>
                 {message.model ? <code>{message.model}</code> : null}
               </div>
@@ -350,8 +266,7 @@ export function ThreadView(props: ThreadViewProps): React.ReactElement {
             <div className="bubble">
               {message.error ? (
                 <div className="error-block">
-                  <div>{message.error}</div>
-                  {message.content ? <Markdown text={message.content} /> : null}
+                  <div className="error-text">{message.error}</div>
                   <div className="actions">
                     {props.onRetry ? (
                       <button className="btn tiny" onClick={() => props.onRetry?.(message)}>
@@ -368,7 +283,7 @@ export function ThreadView(props: ThreadViewProps): React.ReactElement {
                 </div>
               ) : message.content ? (
                 message.role === 'user' ? (
-                  <span>{message.content}</span>
+                  <span className="plain">{message.content}</span>
                 ) : (
                   <Markdown text={message.content} />
                 )
@@ -378,7 +293,6 @@ export function ThreadView(props: ThreadViewProps): React.ReactElement {
             </div>
           </div>
         ))}
-        <div ref={endRef} />
       </div>
     </div>
   );
@@ -399,6 +313,8 @@ export interface ComposerProps {
   skills: Skill[];
   enabledSkillIds: string[];
   modelLabel: string;
+  effort: Effort;
+  parallelCount: number;
   notice: string | null;
   commands: SlashCommand[];
   onChange: (value: string) => void;
@@ -406,6 +322,7 @@ export interface ComposerProps {
   onStop: () => void;
   onToggleSkill: (skillId: string) => void;
   onOpenPicker: () => void;
+  onCycleEffort: () => void;
   onDismissNotice: () => void;
 }
 
@@ -416,7 +333,10 @@ export function Composer(props: ComposerProps): React.ReactElement {
   const slash = props.value.startsWith('/');
   const query = slash ? props.value.slice(1).toLowerCase().split(/\s+/)[0] : '';
   const matches = slash
-    ? props.commands.filter((command) => command.id.toLowerCase().includes(query) || command.label.toLowerCase().includes(query))
+    ? props.commands.filter(
+        (command) =>
+          command.id.toLowerCase().includes(query) || command.label.toLowerCase().includes(query),
+      )
     : [];
 
   useEffect(() => {
@@ -453,28 +373,24 @@ export function Composer(props: ComposerProps): React.ReactElement {
     }
     if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
-      void props.onSend();
+      props.onSend();
     }
   };
-
-  const activeSkills = props.skills.filter((skill) => props.enabledSkillIds.includes(skill.id));
 
   return (
     <div className="composer-wrap">
       {props.notice ? (
-        <div className="composer" style={{ marginBottom: 8, padding: '8px 10px' }}>
-          <div className="banner" style={{ border: 'none', background: 'transparent', padding: 0 }}>
-            <span className="grow">{props.notice}</span>
-            <button className="btn ghost tiny" onClick={props.onDismissNotice}>
-              dismiss
-            </button>
-          </div>
+        <div className="notice-row">
+          <span className="grow">{props.notice}</span>
+          <button className="btn ghost tiny" onClick={props.onDismissNotice}>
+            dismiss
+          </button>
         </div>
       ) : null}
 
-      <div className="composer" style={{ position: 'relative' }}>
+      <div className="composer">
         {matches.length > 0 ? (
-          <div className="popover" style={{ bottom: '100%', left: 0, right: 0, marginBottom: 6 }}>
+          <div className="popover slash-popover">
             <div className="popover-body">
               {matches.map((command, index) => (
                 <button
@@ -494,7 +410,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
         <textarea
           ref={textareaRef}
           value={props.value}
-          placeholder="Message Rllama…  / for commands, Enter to send, Shift+Enter for a new line"
+          placeholder="Ask anything…  / for commands"
           onChange={(event) => props.onChange(event.target.value)}
           onKeyDown={onKeyDown}
           rows={1}
@@ -504,7 +420,12 @@ export function Composer(props: ComposerProps): React.ReactElement {
           <button className="pill" onClick={props.onOpenPicker} title="Choose provider and model">
             <span className="dot ok" />
             <span className="pill-label">{props.modelLabel || 'no model'}</span>
+            {props.parallelCount > 0 ? <span className="badge accent">+{props.parallelCount}</span> : null}
             <IconChevron width={11} height={11} />
+          </button>
+
+          <button className="pill hide-small" onClick={props.onCycleEffort} title="Reasoning effort">
+            {EFFORT_LABELS[props.effort]} effort
           </button>
 
           {props.skills
@@ -514,7 +435,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
               return (
                 <button
                   key={skill.id}
-                  className={`pill ${on ? 'on' : ''}`}
+                  className={`pill skill-pill ${on ? 'on' : ''}`}
                   onClick={() => props.onToggleSkill(skill.id)}
                   title={skill.description}
                 >
@@ -523,10 +444,6 @@ export function Composer(props: ComposerProps): React.ReactElement {
                 </button>
               );
             })}
-
-          {activeSkills.length > 3 ? (
-            <span className="composer-hint">+{activeSkills.length - 3} skills</span>
-          ) : null}
 
           <span className="spacer" />
 
@@ -537,7 +454,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           ) : (
             <button
               className="send-button"
-              onClick={() => props.onSend()}
+              onClick={props.onSend}
               disabled={!props.value.trim()}
               aria-label="Send message"
               title="Send"

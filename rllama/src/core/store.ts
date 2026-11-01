@@ -1,6 +1,7 @@
 import { providerFromTemplate, templateById } from './providers';
+import { DEFAULT_SETTINGS } from './settings';
 import { emptyUsage, type UsageMap } from './usage';
-import type { ModelInfo, Provider, Skill, Thread } from './types';
+import type { McpServer, ModelInfo, ParallelTarget, Provider, Settings, Skill, Thread } from './types';
 
 export interface PersistedState {
   version: number;
@@ -16,6 +17,12 @@ export interface PersistedState {
   skillIds: string[];
   failoverEnabled: boolean;
   systemPrompt: string;
+  settings: Settings;
+  mcpServers: McpServer[];
+  /** Models answering the same prompt at once (empty = single model). */
+  parallel: ParallelTarget[];
+  /** Models the user pinned to the picker without fetching them. */
+  pinnedModels: Record<string, ModelInfo[]>;
 }
 
 export const STORAGE_KEY = 'rllama.state.v2';
@@ -47,9 +54,13 @@ export function emptyState(): PersistedState {
     modelsByProvider: {},
     usage: {},
     customSkills: [],
-    skillIds: ['openrouter'],
+    skillIds: ['caveman', 'rea', 'openrouter'],
     failoverEnabled: true,
     systemPrompt: '',
+    settings: { ...DEFAULT_SETTINGS },
+    mcpServers: [],
+    parallel: [],
+    pinnedModels: {},
   };
 }
 
@@ -82,7 +93,25 @@ export function initialState(): PersistedState {
   state.providers = providers;
   const local = providers.find((provider) => provider.templateId === 'ollama-local');
   const cloud = providers.find((provider) => provider.templateId === 'ollama-cloud');
-  state.threads[0].providerId = cloud?.id ?? local?.id;
+  state.threads[0].providerId = local?.id ?? cloud?.id;
+
+  // Seed what the app ships with, so a first launch has something to pick:
+  // a tiny local model that runs on a phone, plus the cloud ids Ollama exposes
+  // without a separate download.
+  if (local) {
+    state.pinnedModels[local.id] = [{ id: 'treyleo16/claude-oss', label: 'treyleo16/claude-oss' }];
+    state.modelByProvider[local.id] = 'treyleo16/claude-oss';
+  }
+  if (cloud) {
+    state.pinnedModels[cloud.id] = [
+      { id: 'gemma4:31b-cloud', label: 'gemma4:31b-cloud' },
+      { id: 'deepseek-v4.1-flash', label: 'deepseek-v4.1-flash' },
+      { id: 'glm-5.3', label: 'glm-5.3' },
+      { id: 'muse-spark-open', label: 'muse-spark-open' },
+      { id: 'treyleo16/claude-mythos-5-1', label: 'treyleo16/claude-mythos-5-1' },
+    ];
+    state.modelByProvider[cloud.id] = 'gemma4:31b-cloud';
+  }
   return state;
 }
 
@@ -121,6 +150,10 @@ export function loadState(storage: Storage | undefined = safeStorage()): Persist
       skillIds: Array.isArray(parsed.skillIds) ? (parsed.skillIds as string[]) : [],
       failoverEnabled: parsed.failoverEnabled !== false,
       systemPrompt: typeof parsed.systemPrompt === 'string' ? parsed.systemPrompt : '',
+      settings: isRecord(parsed.settings) ? { ...DEFAULT_SETTINGS, ...(parsed.settings as unknown as Partial<Settings>) } : { ...DEFAULT_SETTINGS },
+      mcpServers: Array.isArray(parsed.mcpServers) ? (parsed.mcpServers as McpServer[]) : [],
+      parallel: Array.isArray(parsed.parallel) ? (parsed.parallel as ParallelTarget[]) : [],
+      pinnedModels: isRecord(parsed.pinnedModels) ? (parsed.pinnedModels as Record<string, ModelInfo[]>) : {},
     };
   } catch {
     return initialState();

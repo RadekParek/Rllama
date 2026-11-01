@@ -12,12 +12,14 @@ export interface DrawerProps {
   title: string;
   subtitle?: string;
   wide?: boolean;
+  /** Left drawers are navigation; right ones are settings surfaces. */
+  side?: 'left' | 'right';
   footer?: React.ReactNode;
   onClose: () => void;
   children: React.ReactNode;
 }
 
-export function Drawer({ title, subtitle, wide, footer, onClose, children }: DrawerProps): React.ReactElement {
+export function Drawer({ title, subtitle, wide, side = 'right', footer, onClose, children }: DrawerProps): React.ReactElement {
   const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -39,8 +41,9 @@ export function Drawer({ title, subtitle, wide, footer, onClose, children }: Dra
   return (
     <>
       <div className="backdrop" onClick={onClose} role="presentation" />
+
       <aside
-        className={`drawer ${wide ? 'wide' : ''}`}
+        className={`drawer ${side} ${wide ? 'wide' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-label={title}

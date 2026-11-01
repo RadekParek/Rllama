@@ -25,6 +25,14 @@ const RAW: Array<Omit<CatalogModel, 'name'> & { name: string }> = [
     downloads: '214',
   },
   {
+    name: 'treyleo16/claude-oss',
+    description:
+      'Community 1B Claude-style model — the default here because it is small enough to run on a phone.',
+    capabilities: ['tools'],
+    sizes: ['1b'],
+    context: '32K',
+  },
+  {
     name: 'llama3.1',
     description: 'Meta Llama 3.1, the 8B/70B/405B general-purpose family. Tools, long context, solid all-rounder.',
     capabilities: ['tools'],
@@ -67,6 +75,7 @@ const RAW: Array<Omit<CatalogModel, 'name'> & { name: string }> = [
     context: '128K',
     downloads: '41.6M',
   },
+  { name: 'gemma4:31b-cloud', aliases: ['gemma4'], description: 'Gemma 4 31B on Ollama Cloud — no download, runs on ollama.com with your key.', capabilities: ['vision', 'tools', 'thinking', 'cloud'], sizes: ['31b'], context: '256K', cloud: true },
   { name: 'gemma4', description: 'Gemma 4: frontier performance per size, reasoning, agentic work, audio and vision.', capabilities: ['vision', 'tools', 'thinking', 'audio', 'cloud'], sizes: ['e2b', 'e4b', '12b', '26b', '31b'], downloads: '28.3M' },
   { name: 'gemma2', description: 'Gemma 2 in 2B, 9B and 27B.', capabilities: [], sizes: ['2b', '9b', '27b'], downloads: '36.2M' },
   { name: 'gemma', description: 'Gemma 1.1, 2B and 7B.', capabilities: [], sizes: ['2b', '7b'], downloads: '8.4M' },
@@ -123,7 +132,9 @@ export function searchCatalog(catalog: CatalogModel[], query: string): CatalogMo
   }
   return catalog.filter(
     (model) =>
-      model.name.toLowerCase().includes(needle) || model.description.toLowerCase().includes(needle),
+      model.name.toLowerCase().includes(needle) ||
+      model.description.toLowerCase().includes(needle) ||
+      (model.aliases ?? []).some((alias) => alias.includes(needle)),
   );
 }
 
@@ -147,4 +158,4 @@ export function filterCatalog(
 }
 
 /** The three skills the user asked to ship pre-installed, kept near the top. */
-export const PINNED_CATALOG = ['treyleo16/claude-mythos-5-1', 'llama3.1', 'qwen3', 'gemma3'];
+export const PINNED_CATALOG = ['treyleo16/claude-oss', 'treyleo16/claude-mythos-5-1', 'gemma4:31b-cloud', 'llama3.1'];

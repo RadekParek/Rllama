@@ -4,23 +4,30 @@ import {
   modelsEndpoint,
   parseModelList,
 } from './providers';
+import { advise, type ErrorAdvice } from './errors';
 import { createNdjsonParser, createSseParser } from './sse';
 import { transportFetch } from './transport';
-import type { ChatMessage, ModelInfo, Provider, TokenUsage } from './types';
+import type { ChatMessage, Effort, ModelInfo, Protocol, Provider, TokenUsage } from './types';
 
 /** An HTTP or protocol failure from a provider. */
 export class ProviderError extends Error {
   readonly status: number;
   readonly body: string;
+  readonly advice: ErrorAdvice;
 
-  constructor(status: number, body: string) {
-    super(describeStatus(status, body));
+  constructor(status: number, body: string, url = '', protocol = 'openai') {
+    const advice = advise({ status, body, url, protocol });
+    super(advice.fix ? `${advice.summary}\n\n${advice.fix}` : advice.summary);
     this.name = 'ProviderError';
     this.status = status;
     this.body = body;
+    this.advice = advice;
   }
 
-  /** True for conditions where moving to another provider makes sense. */
+  get kind(): ErrorAdvice['kind'] {
+    return this.advice.kind;
+  }
+
   /** True when the same provider may work over a different wire protocol. */
   get isProtocolMismatch(): boolean {
     if (this.status === 404) {
@@ -39,35 +46,9 @@ export class ProviderError extends Error {
     );
   }
 
+  /** True for conditions where moving to another provider makes sense. */
   get isFailoverWorthy(): boolean {
-    return (
-      this.status === 401 ||
-      this.status === 402 ||
-      this.status === 403 ||
-      this.status === 404 ||
-      this.status === 429 ||
-      this.status >= 500 ||
-      this.status === 0
-    );
-  }
-}
-
-function describeStatus(status: number, body: string): string {
-  const trimmed = body.trim();
-  const detail = trimmed.length > 400 ? `${trimmed.slice(0, 400)}…` : trimmed;
-  switch (status) {
-    case 401:
-      return `401 unauthorised — the API key was rejected. ${detail}`;
-    case 402:
-      return `402 payment required — the account is out of credit. ${detail}`;
-    case 403:
-      return `403 forbidden — this key may not use that model. ${detail}`;
-    case 404:
-      return `404 not found — check the base URL (for Ollama Cloud it is https://ollama.com/v1). ${detail}`;
-    case 429:
-      return `429 rate limited or quota exhausted. ${detail}`;
-    default:
-      return status === 0 ? `Network error: ${detail}` : `HTTP ${status}: ${detail}`;
+    return this.advice.failover;
   }
 }
 
@@ -84,6 +65,9 @@ export interface StreamRequest {
   messages: ChatMessage[];
   system?: string;
   maxTokens?: number;
+  /** Codex-style effort control, mapped per wire API. */
+  effort?: Effort;
+  temperature?: number;
   signal?: AbortSignal;
   handlers: StreamHandlers;
 }
@@ -97,7 +81,13 @@ function estimateTokens(text: string): number {
   return Math.max(1, Math.round(text.length / 4));
 }
 
-async function post(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal): Promise<Response> {
+async function post(
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+  signal: AbortSignal | undefined,
+  protocol: Protocol,
+): Promise<Response> {
   let response: Response;
   try {
     response = await transportFetch(
@@ -114,11 +104,11 @@ async function post(url: string, headers: Record<string, string>, body: unknown,
       throw error;
     }
     const message = error instanceof Error ? error.message : String(error);
-    throw new ProviderError(0, message);
+    throw new ProviderError(0, message, url, protocol);
   }
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new ProviderError(response.status, text);
+    throw new ProviderError(response.status, text, url, protocol);
   }
   return response;
 }
@@ -146,7 +136,7 @@ async function readChunks(response: Response, onChunk: (chunk: string) => void):
 
 /** Streams a chat completion over whichever protocol the provider uses. */
 export async function streamChat(request: StreamRequest): Promise<StreamResult> {
-  const { provider, model, messages, system, maxTokens, signal, handlers } = request;
+  const { provider, model, messages, system, maxTokens, effort, temperature, signal, handlers } = request;
   const url = chatEndpoint(provider.protocol, provider.baseUrl);
   const headers = authHeaders(provider);
 
@@ -166,9 +156,12 @@ export async function streamChat(request: StreamRequest): Promise<StreamResult> 
       model,
       messages: system ? [{ role: 'system', content: system }, ...messages] : messages,
       stream: true,
-      ...(maxTokens ? { options: { num_predict: maxTokens } } : {}),
+      ...(effort === 'high' ? { think: true } : {}),
+      ...(maxTokens || temperature !== undefined
+        ? { options: { ...(maxTokens ? { num_predict: maxTokens } : {}), ...(temperature !== undefined ? { temperature } : {}) } }
+        : {}),
     };
-    const response = await post(url, headers, payload, signal);
+    const response = await post(url, headers, payload, signal, provider.protocol);
     const parser = createNdjsonParser((value) => {
       const record = value as Record<string, unknown>;
       const message = record.message as Record<string, unknown> | undefined;
@@ -187,10 +180,11 @@ export async function streamChat(request: StreamRequest): Promise<StreamResult> 
       model,
       max_tokens: maxTokens ?? 4096,
       stream: true,
+      ...(temperature !== undefined ? { temperature } : {}),
       ...(system ? { system } : {}),
       messages: messages.filter((message) => message.role !== 'system'),
     };
-    const response = await post(url, headers, payload, signal);
+    const response = await post(url, headers, payload, signal, provider.protocol);
     const parser = createSseParser((event) => {
       const record = safeJson(event.data);
       if (!record) {
@@ -241,10 +235,17 @@ export async function streamChat(request: StreamRequest): Promise<StreamResult> 
     if (system) {
       payload.instructions = system;
     }
+    if (effort) {
+      // Responses API uses the structured reasoning object.
+      payload.reasoning = { effort };
+    }
+    if (temperature !== undefined) {
+      payload.temperature = temperature;
+    }
     if (maxTokens) {
       payload.max_output_tokens = maxTokens;
     }
-    const response = await post(url, headers, payload, signal);
+    const response = await post(url, headers, payload, signal, provider.protocol);
     const parser = createSseParser((event) => {
       const record = safeJson(event.data);
       if (!record) {
@@ -311,7 +312,15 @@ export async function streamChat(request: StreamRequest): Promise<StreamResult> 
     if (maxTokens) {
       payload.max_tokens = maxTokens;
     }
-    const response = await post(url, headers, payload, signal);
+    if (temperature !== undefined) {
+      payload.temperature = temperature;
+    }
+    if (effort) {
+      // Chat Completions takes the flat field; gateways ignore it when they
+      // do not support reasoning models.
+      payload.reasoning_effort = effort;
+    }
+    const response = await post(url, headers, payload, signal, provider.protocol);
     const parser = createSseParser((event) => {
       const record = safeJson(event.data);
       if (!record) {
@@ -398,11 +407,11 @@ export async function listModels(provider: Provider, signal?: AbortSignal): Prom
     response = await transportFetch(url, { headers: authHeaders(provider) }, signal);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new ProviderError(0, message);
+    throw new ProviderError(0, message, url, provider.protocol);
   }
   if (!response.ok) {
     const text = await response.text().catch(() => '');
-    throw new ProviderError(response.status, text);
+    throw new ProviderError(response.status, text, url, provider.protocol);
   }
   const payload: unknown = await response.json().catch(() => null);
   const contextById = contextLengths(payload);

@@ -66,12 +66,46 @@ export interface CatalogModel {
   description: string;
   /** tools | thinking | vision | embedding | audio | cloud ... */
   capabilities: string[];
+  /** Other ids the same family is known by. */
+  aliases?: string[];
   /** Tag sizes the family publishes, e.g. ["1b", "8b", "70b"]. */
   sizes?: string[];
   context?: string;
   downloads?: string;
   /** Runs on ollama.com rather than on this machine. */
   cloud?: boolean;
+}
+
+/** Reasoning effort, mirroring Codex's low/medium/high control. */
+export type Effort = 'low' | 'medium' | 'high';
+
+export interface Settings {
+  effort: Effort;
+  /** Cap on the reply length, in tokens. */
+  maxTokens: number;
+  /** How many tokens of history to send before trimming the oldest turns. */
+  contextTokens: number;
+  temperature: number;
+  /** Agent preamble: plan, act, verify instead of plain chat. */
+  agentMode: boolean;
+  /** Vendor marks next to model names. */
+  showLogos: boolean;
+}
+
+/** An MCP server definition; configuration only for now. */
+export interface McpServer {
+  id: string;
+  name: string;
+  /** stdio command or http(s) URL. */
+  target: string;
+  transport: 'stdio' | 'http';
+  enabled: boolean;
+}
+
+/** One target of a parallel run: several models answering the same prompt. */
+export interface ParallelTarget {
+  providerId: string;
+  model: string;
 }
 
 export interface TokenUsage {
@@ -82,6 +116,8 @@ export interface TokenUsage {
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
+  /** Answers produced by one parallel send share a group id. */
+  groupId?: string;
   content: string;
   createdAt: number;
   providerId?: string;
@@ -96,6 +132,7 @@ export interface Thread {
   id: string;
   title: string;
   messages: Message[];
+  effort?: Effort;
   providerId?: string;
   model?: string;
   skillIds: string[];
