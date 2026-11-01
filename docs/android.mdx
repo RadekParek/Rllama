@@ -2,26 +2,27 @@
 title: Android
 ---
 
-Ollama runs on Android as a regular app: the same Go CLI/server and the same
-llama.cpp inference server that the desktop build ships are bundled inside the
-APK and started as child processes of the app. The app opens straight into a
-terminal, so the commands and the HTTP API are the ones you already use on a
-PC. The REST API listens on `127.0.0.1:11434` (or `0.0.0.0:11434` when LAN
-access is enabled) so coding agents can connect to it.
+Ollama ships as a single Android APK containing the same Go server/CLI and the
+same llama.cpp inference server as the desktop builds, compiled for
+`arm64-v8a`. Nothing is downloaded after installation except model weights.
+
+The APK is deliberately close to the desktop binary: there is no alternative
+API, no mock server and no separate runtime installer. Installing it puts the
+real `ollama` command on your phone, and `ollama serve` runs in the background
+so the stock HTTP API answers on `127.0.0.1:11434`.
 
 ## Requirements
 
-- Android 8.0 (API 26) or newer, `arm64-v8a` device (phones and tablets)
+- Android 8.0 (API 26) or newer on an `arm64-v8a` device
 - Roughly 2 GB of free RAM for small models, 8 GB or more for 7B models
 - 2–5 GB of free storage per model
 
 ## Install
 
-CI builds exactly one APK. Download `rllama-ollama-<version>-android-arm64.apk`
-from the `ollama-android-apk` artifact of the `android` workflow (or from the
-release assets when a release was published). It is signed with an ephemeral
-debug key, so allow "install unknown apps" for your file manager or use
-`adb install`.
+Download `rllama-ollama-<version>-android-arm64.apk` from the
+`ollama-android-apk` artifact of the `android` workflow (or from the release
+assets when a release was published) and install it. The APK is debug-signed, so
+allow "install unknown apps" for your file manager or use `adb install`.
 
 ```shell
 adb install -r rllama-ollama-<version>-android-arm64.apk
@@ -29,113 +30,78 @@ adb install -r rllama-ollama-<version>-android-arm64.apk
 
 ## Using the app
 
-The app opens on the terminal. It starts the server automatically and prints the
-payload diagnostics, so the first thing on screen is the CLI you know from the
-desktop build.
+The app opens a console. The bundled `ollama` binary is on `PATH` inside it, and
+the server starts automatically:
 
-| Screen | What it does |
-| --- | --- |
-| Terminal (launch screen) | The real CLI: `ollama …`, `curl localhost:11434/…`, anything `/system/bin/sh` can do |
-| Server | Start/stop/restart the daemon, endpoints, native payload status and the live log |
-| Chat | Quick streaming chat against a local model |
-| Models | List, pull, delete models, or import a `.gguf` file from storage |
-| Connect | Copy/paste snippets for Claude Code, the Ollama CLI and OpenAI-compatible clients |
-| Settings | Port, LAN access, context length, parallelism, keep-alive, models directory, boot start |
-
-The server keeps running in the background through a foreground service with a
-partial wake lock, so long generations are not interrupted when the screen
-turns off.
-
-### Built-in terminal
-
-The terminal spawns `/system/bin/sh` with the environment Ollama needs, and
-rewrites the `ollama` / `llama-server` tokens to the executables inside the APK
-(apps cannot put binaries on `PATH` on modern Android):
-
-```
+```shell
 $ ollama list
 $ ollama pull gemma3:1b
 $ ollama run gemma3:1b "summarize this repo"
 $ curl -s localhost:11434/api/tags
 ```
 
-Built-ins: `help`, `clear`, `env`, `server start|stop|status`, `chat`,
-`models`, `connect`.
+The long-press menu copies the transcript, the ↑/↓ keys recall previous
+commands, and **Stop** interrupts the running command. The foreground service
+keeps the server alive when you leave the app.
+
+Ollama's defaults are untouched: models live in `$HOME/.ollama/models` inside
+the app's private directory, and the API listens on `127.0.0.1:11434`. Because
+the server binds the loopback interface only, other devices cannot reach it;
+expose it with your own `OLLAMA_HOST` if you need that:
+
+```shell
+$ OLLAMA_HOST=0.0.0.0:11434 ollama serve
+```
 
 ### Connecting Claude Code
 
-Enable **Settings → Allow connections from other devices** when the agent runs
-on another machine, and raise **Settings → Context length** to at least 16384
-(coding agents send long prompts), then on that machine:
+`ollama serve` exposes the same `/api/*` and `/v1/*` routes (including
+`/v1/messages`) as on the desktop, so a client that runs on the phone or through
+a port forward can use the usual settings:
 
-```shell
-export ANTHROPIC_BASE_URL=http://<phone-ip>:11434
-export ANTHROPIC_AUTH_TOKEN=ollama
-export ANTHROPIC_API_KEY=
-export ANTHROPIC_MODEL=qwen2.5-coder:7b
-claude
+```
+OLLAMA_HOST=http://127.0.0.1:11434
 ```
 
-The Connect screen fills in the phone's current IP address and lets you copy the
-whole block. Because Ollama serves the Anthropic Messages API on
-`/v1/messages`, no proxy is required.
+## What is in the APK
 
-Termux on the same phone also works — loopback is shared between apps:
+| Component | Path inside the APK | Uncompressed |
+| --- | --- | --- |
+| Ollama Go server + CLI | `lib/arm64-v8a/libollama.so` | 40,585,696 B |
+| llama.cpp inference server (CPU, static) | `lib/arm64-v8a/libllama-server.so` | 16,169,816 B |
+| App: console, foreground service, process host | `classes*.dex` | ~10,100,000 B |
+| Third-party license texts | `assets/licenses/` | small |
 
-```shell
-export ANTHROPIC_BASE_URL=http://127.0.0.1:11434
-export ANTHROPIC_AUTH_TOKEN=ollama
-claude
-```
+Sizes are from the CI build of the current commit; the **APK itself is
+27,420,158 bytes** (~26 MiB; a few bytes move between builds because the
+version string is embedded) because the entries are deflated, and it occupies
+about 67 MB once installed, before any model is pulled.
 
-The Ollama CLI on a computer can target the phone as well:
+Android only extracts APK entries named `lib*.so` into the executable native
+library directory, which is why the two executables carry that name; they are
+ordinary Ollama binaries otherwise.
 
-```shell
-export OLLAMA_HOST=http://<phone-ip>:11434
-ollama run qwen2.5-coder:7b
-```
+The exact byte size of every entry is printed by the `Report APK contents` step
+of the `android` workflow (`unzip -v` also shows it locally). `llama-server` is
+stripped of DWARF debug info by `scripts/build_android.sh`; that reduced it from
+204 MB to 16 MB, since debug sections are useless on a phone.
 
-### OpenAI-compatible clients
+### Why the APK is much smaller than the Windows installer
 
-Use `http://<phone-ip>:11434/v1` as the base URL with any non-empty API key.
+The Windows and macOS distributions bundle one inference backend per GPU vendor
+— CUDA (`cublas`, `cudart`), ROCm, Vulkan — plus several `llama-server` variants
+and their runtime DLLs. Those thousands of megabytes are GPU-specific and
+useless on a phone. The APK ships one ABI with the CPU backend only, statically
+linked. Model weights are not bundled in either case: they are downloaded after
+installation.
 
-## Environment
-
-The app sets these variables for every process it spawns:
-
-| Variable | Value |
-| --- | --- |
-| `OLLAMA_HOST` | `127.0.0.1:11434` or `0.0.0.0:11434` with LAN access |
-| `OLLAMA_MODELS` | app-specific external storage (`…/files/models`) by default |
-| `OLLAMA_LIBRARY_PATH` | the app's native library directory |
-| `OLLAMA_CONTEXT_LENGTH` | configurable in Settings (default 8192) |
-| `OLLAMA_NUM_PARALLEL` | configurable in Settings (default 1) |
-| `OLLAMA_MAX_LOADED_MODELS` | `1` |
-| `OLLAMA_KEEP_ALIVE` | configurable in Settings (default `5m`) |
-| `HOME`, `TMPDIR`, `PATH`, `LD_LIBRARY_PATH` | sandboxed app directories |
-
-## How the payload is packaged
-
-Android only executes binaries from the app's read-only native library
-directory, and the package manager only extracts entries named `lib*.so`.
-The build therefore ships:
-
-- `libollama.so` — the Go binary built with `GOOS=android`
-- `libllama-server.so` — the statically linked llama.cpp server
-
-`ml/path.go` and `llm/llama_binary.go` know about that layout, so no other
-configuration is needed.
-
-## Building the APK from source
-
-Prerequisites: Go (matching `go.mod`), CMake 3.24+, Ninja, an Android NDK
-(r26+), a JDK 17, and Gradle 8.9+ (or Android Studio).
+## Build
 
 ```shell
-# 1. Build the native payload and stage it into app/src/main/jniLibs
+# native payload
 ANDROID_NDK_HOME=/path/to/ndk ./scripts/build_android.sh -a arm64-v8a
 
-# 2. Build the APK
+# APK
 cd android
 gradle assembleDebug
 # output: app/build/outputs/apk/debug/app-debug.apk
@@ -143,29 +109,52 @@ gradle assembleDebug
 
 In CI this is `.github/workflows/android.yaml`, which runs on tags, on `main`
 pushes that touch the app or native inputs, on pull requests, and manually via
-*Run workflow*. It uploads `ollama-android-apk`, and on a `v*` tag it also
-attaches the APK to the existing GitHub release when one is present.
+*Run workflow*. It builds exactly one APK, verifies that both payload entries
+are present and executable-on-install, and uploads `ollama-android-apk`. On a
+`v*` tag it also attaches the APK to the existing GitHub release when one is
+present.
 
 ### Signing
 
-CI builds a single `assembleDebug` APK signed with the standard Android debug
-key, which is installable on any device with "install unknown apps" enabled. No
-keystore secrets are required; keep your own signing setup if you publish the
-APK through a store.
+The APK is the standard debug build: installable anywhere with "install unknown
+apps" enabled, and compatible with `adb install -r` upgrades. No keystore
+secrets are needed. Sign it with your own key if you publish it through a store.
+
+## Verified and unverified behaviour
+
+Verified in CI on every build:
+
+- both executables are built for `arm64-v8a` (`file` reports AArch64 ELF)
+- the APK contains `lib/arm64-v8a/libollama.so` and
+  `lib/arm64-v8a/libllama-server.so` as installer-extractable entries
+- the packaged manifest declares the console activity as the launcher
+- the app compiles against SDK 35
+
+Not verified automatically — no physical device is attached to CI, so these are
+manual steps:
+
+- installing the APK on a phone, starting `ollama serve`, `ollama pull`, a real
+  generation, and a check that inference still works with networking disabled
+
+If you run those checks, report the results you actually see; do not assume
+they passed.
+
+## Limitations
+
+- `arm64-v8a` only; no 32-bit ARM, no `x86_64` (except when built explicitly
+  with `scripts/build_android.sh -a x86_64` and matching `abiFilters`).
+- CPU inference only: no Vulkan/OpenCL backend and no GPU offload.
+- The desktop chat window (`app/ui`, Windows/macOS only) is not included; the
+  phone exposes the CLI and the HTTP API.
+- No model auto-update, no tray icon, no desktop app updater.
 
 ## Troubleshooting
 
 - **"native payload missing"** — the APK was built without running
   `scripts/build_android.sh` first, so `jniLibs/arm64-v8a` was empty.
-- **Model load fails / app is killed** — lower the context length in Settings,
-  pull a smaller model, and close other apps; Android reclaims memory from
-  background processes aggressively.
-- **Other devices cannot connect** — enable LAN access, make sure both devices
-  are on the same Wi-Fi (guest networks and AP isolation block it), and check
-  that the phone's firewall/VPN is not intercepting local traffic.
-- **`ollama pull` fails with DNS/network errors** — the phone may be on a
-  network that blocks the registry. Import a GGUF file from the Models screen
-  instead (no registry access needed), or switch networks.
-- **`libllama-server.so` present but "llama-server binary not found"** — the
-  binary was copied without the executable bit; rebuild the payload with
-  `scripts/build_android.sh` (it applies `chmod 0755`).
+- **Model load fails / the app is killed** — lower the context length
+  (`OLLAMA_CONTEXT_LENGTH`), pull a smaller quantisation, and close other apps.
+- **`ollama pull` fails with DNS/network errors** — the network may block the
+  registry; try another network or import a GGUF file with `ollama create`.
+- **`llama-server` not found by the server** — the copy lost its executable bit;
+  rebuild the payload with `scripts/build_android.sh` (it applies `chmod 0755`).

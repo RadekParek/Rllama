@@ -1,65 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Rllama Ollama</string>
+    <string name="app_name">Ollama</string>
 
-    <string name="channel_server">Ollama server</string>
-    <string name="channel_server_description">Keeps the local Ollama server running in the background</string>
-    <string name="notification_title">Ollama server</string>
+    <string name="channel_server">Ollama</string>
+    <string name="channel_server_description">Keeps the local Ollama server running</string>
+    <string name="notification_title">Ollama</string>
     <string name="notification_running">Serving on %1$s</string>
-    <string name="notification_starting">Starting the Ollama server…</string>
-    <string name="notification_failed">The Ollama server stopped</string>
+    <string name="notification_starting">Starting…</string>
+    <string name="notification_failed">The server stopped</string>
     <string name="notification_idle">Idle</string>
     <string name="action_stop_server">Stop</string>
 
-    <string name="main_title">Ollama on Android</string>
-    <string name="main_status_heading">Server</string>
-    <string name="main_status_stopped">Stopped</string>
-    <string name="main_tools_heading">Tools</string>
-    <string name="main_payload_heading">Native payload</string>
-    <string name="main_log_heading">Log</string>
-
-    <string name="action_start">Start</string>
-    <string name="action_stop">Stop</string>
-    <string name="action_restart">Restart server</string>
-    <string name="action_terminal">Terminal / CLI</string>
-    <string name="action_chat">Chat</string>
-    <string name="action_models">Models</string>
-    <string name="action_connect">Connect Claude Code / other apps</string>
-    <string name="action_settings">Settings</string>
-
-    <string name="nav_chat">Chat</string>
-    <string name="nav_models">Models</string>
-    <string name="nav_connect">Connect</string>
-    <string name="nav_server">Server</string>
-    <string name="nav_settings">Settings</string>
-
-    <string name="terminal_chip_list">ollama list</string>
-    <string name="terminal_chip_ps">ollama ps</string>
-    <string name="terminal_chip_help">help</string>
-    <string name="terminal_hint">ollama run gemma3:1b</string>
+    <string name="terminal_hint">ollama run gemma3</string>
     <string name="terminal_run">Run</string>
     <string name="terminal_stop">Stop</string>
     <string name="terminal_clear">Clear</string>
-
-    <string name="chat_refresh">↻</string>
-    <string name="chat_hint">Ask the model something…</string>
-    <string name="chat_send">Send</string>
-
-    <string name="models_pull">Pull</string>
-    <string name="models_import">Import GGUF</string>
-    <string name="models_refresh">Refresh</string>
-
-    <string name="settings_port_label">Server port</string>
-    <string name="settings_lan_label">Allow connections from other devices (bind 0.0.0.0)</string>
-    <string name="settings_lan_help">When enabled, other machines on the same Wi-Fi (and apps such as Termux on this phone) can reach the server. Only enable this on networks you trust.</string>
-    <string name="settings_context_label">Context length</string>
-    <string name="settings_context_help">Default 8192 tokens. Coding agents such as Claude Code want 16384–32768, which costs RAM; lower it if model loading fails on a small device.</string>
-    <string name="settings_parallel_label">Parallel requests</string>
-    <string name="settings_keepalive_label">Keep model loaded for</string>
-    <string name="settings_models_dir_label">Models directory</string>
-    <string name="settings_models_dir_reset">Reset to app storage</string>
-    <string name="settings_debug_label">Verbose logging (OLLAMA_DEBUG)</string>
-    <string name="settings_boot_label">Start the server when the phone boots</string>
-    <string name="settings_save">Save</string>
-    <string name="settings_save_restart">Save and restart server</string>
 </resources>

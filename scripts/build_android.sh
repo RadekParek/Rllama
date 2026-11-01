@@ -192,6 +192,17 @@ fi
 LLAMA_SERVER_BIN="$LLAMA_STAGE/lib/ollama/llama-server"
 [ -f "$LLAMA_SERVER_BIN" ] || fail "llama-server was not produced at $LLAMA_SERVER_BIN"
 
+# Release builds of llama-server keep DWARF debug info, which is useless on a
+# phone and dominates the binary size. Strip only the debug sections so symbol
+# tables and everything the loader needs stay intact.
+STRIP_BIN="$TOOLCHAIN/bin/llvm-strip"
+if [ -x "$STRIP_BIN" ]; then
+	before="$(wc -c <"$LLAMA_SERVER_BIN" | tr -d ' ')"
+	"$STRIP_BIN" --strip-debug "$LLAMA_SERVER_BIN" 2>/dev/null || true
+	after="$(wc -c <"$LLAMA_SERVER_BIN" | tr -d ' ')"
+	status "llama-server: $before bytes -> $after bytes after stripping debug info"
+fi
+
 cp -f "$LLAMA_SERVER_BIN" "$JNI_LIBS_BASE/$ABI/libllama-server.so"
 cp -f "$LLAMA_SERVER_BIN" "$OUT_BASE/$ABI/libllama-server.so"
 

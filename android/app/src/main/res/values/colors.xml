@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="rllama_accent">#FF1F6FEB</color>
+    <!-- The Ollama app icon: white llama on the black mark used by the desktop app. -->
+    <color name="ollama_icon_background">#FF0A0A0A</color>
 </resources>
