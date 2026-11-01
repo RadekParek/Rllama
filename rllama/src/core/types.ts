@@ -76,8 +76,8 @@ export interface CatalogModel {
   cloud?: boolean;
 }
 
-/** Reasoning effort, mirroring Codex's low/medium/high control. */
-export type Effort = 'low' | 'medium' | 'high';
+/** Reasoning effort, expanded from Codex's control to six named levels. */
+export type Effort = 'minimal' | 'low' | 'medium' | 'high' | 'max' | 'ultracode';
 
 export interface Settings {
   effort: Effort;

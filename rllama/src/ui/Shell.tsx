@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import type { Effort, Message, ModelInfo, Provider, Skill } from '../core/types';
-import { EFFORT_LABELS } from '../core/settings';
+import { EFFORT_META, EFFORT_ORDER, modelShortName } from '../core/settings';
 import { Markdown } from './Markdown';
 import { ModelLogo } from './ModelLogo';
 import {
@@ -33,14 +33,10 @@ export interface TopBarProps {
   title: string;
   providerName: string;
   modelLabel: string;
-  usageLabel: string;
-  usageLevel: 'ok' | 'warn' | 'danger';
-  effort: Effort;
   parallelCount: number;
   pickerOpen: boolean;
   onOpenMenu: () => void;
   onTogglePicker: () => void;
-  onCycleEffort: () => void;
   onOpenPanel: (panel: PanelId) => void;
   picker: React.ReactNode;
 }
@@ -51,32 +47,32 @@ export function TopBar(props: TopBarProps): React.ReactElement {
       <button className="icon-button" onClick={props.onOpenMenu} aria-label="Menu" title="Menu">
         <IconMenu />
       </button>
-      <span className="topbar-title">{props.title}</span>
 
       <div className="picker-anchor">
-        <button className="pill" onClick={props.onTogglePicker} aria-expanded={props.pickerOpen} title="Provider and model">
+        <button
+          className="pill model-pill"
+          onClick={props.onTogglePicker}
+          aria-expanded={props.pickerOpen}
+          title={props.modelLabel ? `${props.providerName} · ${props.modelLabel}` : 'Choose a model'}
+        >
           {props.modelLabel ? <ModelLogo model={props.modelLabel} /> : <span className="dot ok" />}
-          <span className="pill-label">
-            {props.providerName ? `${props.providerName} · ${props.modelLabel || 'no model'}` : 'no provider'}
-          </span>
+          <span className="pill-label">{props.modelLabel ? modelShortName(props.modelLabel) : 'no model'}</span>
+          {props.parallelCount > 0 ? <span className="badge accent">+{props.parallelCount}</span> : null}
           <IconChevron width={11} height={11} />
         </button>
         {props.pickerOpen ? props.picker : null}
       </div>
 
-      <button className="pill hide-small" onClick={props.onCycleEffort} title="Reasoning effort">
-        <span className="pill-label">{EFFORT_LABELS[props.effort]}</span>
-      </button>
-
-      {props.parallelCount > 0 ? (
-        <span className="pill on hide-small" title="Several models answer at once">
-          {props.parallelCount + 1} models
-        </span>
-      ) : null}
+      <span className="topbar-title">{props.title}</span>
 
       <span className="spacer" />
 
-      <button className="icon-button" onClick={() => props.onOpenPanel('settings')} title="Settings" aria-label="Settings">
+      <button
+        className="icon-button"
+        onClick={() => props.onOpenPanel('settings')}
+        title="Settings"
+        aria-label="Settings"
+      >
         <IconSliders />
       </button>
     </div>
@@ -162,9 +158,18 @@ export function ModelPicker(props: ModelPickerProps): React.ReactElement {
               const inParallel = isParallel(provider.id, model.id);
               return (
                 <div className={`model-row ${isActive ? 'active' : ''}`} key={model.id}>
-                  <button className="model-option" onClick={() => props.onPick(provider.id, model.id)}>
+                  <button
+                    className="model-option"
+                    onClick={() => {
+                      props.onPick(provider.id, model.id);
+                      props.onClose();
+                    }}
+                  >
                     {props.showLogos ? <ModelLogo model={model.id} /> : null}
-                    <code>{model.id}</code>
+                    <span className="model-name">{modelShortName(model.id)}</span>
+                    {model.id.includes('/') ? (
+                      <span className="model-namespace">{model.id.split('/')[0]}/</span>
+                    ) : null}
                     {model.context ? <span className="trailing">{formatContext(model.context)}</span> : null}
                   </button>
                   <button
@@ -258,7 +263,7 @@ export function ThreadView(props: ThreadViewProps): React.ReactElement {
               <div className="meta">
                 {props.showLogos && message.model ? <ModelLogo model={message.model} size={13} /> : null}
                 <span className="who">{message.answeredBy ?? message.providerId ?? 'assistant'}</span>
-                {message.model ? <code>{message.model}</code> : null}
+                {message.model ? <code title={message.model}>{modelShortName(message.model)}</code> : null}
               </div>
             )}
             <div className="bubble">
@@ -327,13 +332,15 @@ export interface ComposerProps {
   onToggleSkill: (skillId: string) => void;
   onToggleAgentMode: () => void;
   onOpenPicker: () => void;
-  onCycleEffort: () => void;
+  onSetEffort: (effort: Effort) => void;
   onDismissNotice: () => void;
 }
 
 export function Composer(props: ComposerProps): React.ReactElement {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [commandIndex, setCommandIndex] = useState(0);
+  const [effortOpen, setEffortOpen] = useState(false);
+  const effortMeta = EFFORT_META[props.effort];
 
   const slash = props.value.startsWith('/');
   const query = slash ? props.value.slice(1).toLowerCase().split(/\s+/)[0] : '';
@@ -422,16 +429,49 @@ export function Composer(props: ComposerProps): React.ReactElement {
         />
 
         <div className="composer-row">
-          <button className="pill model-pill" onClick={props.onOpenPicker} title="Choose provider and model">
-            {props.modelLabel ? <ModelLogo model={props.modelLabel.split(' · ').pop() ?? ''} size={13} /> : <span className="dot ok" />}
+          <button className="pill model-pill" onClick={props.onOpenPicker} title="Choose model">
+            {props.modelLabel ? <ModelLogo model={props.modelLabel} size={13} /> : <span className="dot ok" />}
             <span className="pill-label">{props.modelLabel || 'no model'}</span>
             {props.parallelCount > 0 ? <span className="badge accent">+{props.parallelCount}</span> : null}
             <IconChevron width={11} height={11} />
           </button>
 
-          <button className="pill hide-small" onClick={props.onCycleEffort} title="Reasoning effort">
-            {EFFORT_LABELS[props.effort]} effort
-          </button>
+          <div style={{ position: 'relative' }}>
+            <button
+              className="pill effort-pill"
+              data-effort={props.effort}
+              onClick={() => setEffortOpen((value) => !value)}
+              title={`Effort: ${effortMeta.label} — ${effortMeta.description}`}
+              aria-expanded={effortOpen}
+            >
+              <span className="effort-dot" style={{ background: effortMeta.color }} />
+              <span className="pill-label">{effortMeta.label}</span>
+            </button>
+            {effortOpen ? (
+              <div className="popover effort-popover">
+                <div className="popover-body">
+                  {EFFORT_ORDER.map((level) => {
+                    const meta = EFFORT_META[level];
+                    return (
+                      <button
+                        key={level}
+                        className={`effort-option ${level === props.effort ? 'active' : ''}`}
+                        data-effort={level}
+                        onClick={() => {
+                          props.onSetEffort(level);
+                          setEffortOpen(false);
+                        }}
+                      >
+                        <span className="effort-dot" style={{ background: meta.color }} />
+                        <span className="effort-name">{meta.label}</span>
+                        <span className="effort-note">{meta.description}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
+          </div>
 
           <button
             className={`pill ${props.agentMode ? 'on' : ''}`}

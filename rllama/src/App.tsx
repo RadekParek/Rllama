@@ -1,22 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listModels, ProviderError, streamChat } from './core/client';
-import { pullModel, type PullProgress } from './core/ollama';
-import { AGENT_PREAMBLE, EFFORT_LABELS, trimHistory } from './core/settings';
+import { discoverDaemon, probeDaemon, pullModel, type DaemonProbe, type PullProgress } from './core/ollama';
+import { AGENT_PREAMBLE, ULTRACODE_PREAMBLE, effortMaxTokens, modelShortName, trimHistory } from './core/settings';
 import { allSkills, buildSystemPrompt, PINNED_SKILLS } from './core/skills';
 import { loadState, newThread, pruneUsage, saveState, uid, type PersistedState } from './core/store';
 import {
   chooseProvider,
   clearProviderError,
   emptyUsage,
-  formatTokens,
   markProviderError,
   nextProvider,
   recordUsage,
   resetWindow,
   setLimit,
-  usageLevel,
-  usageOf,
-  usageRatio,
   type UsageMap,
 } from './core/usage';
 import type { ChatMessage, Effort, Message, ModelInfo, ParallelTarget, Provider, Skill, Thread } from './core/types';
@@ -31,8 +27,6 @@ import { SettingsPanel } from './ui/panels/Settings';
 import { CliPanel, McpPanel } from './ui/panels/Workspace';
 import { LocalPanel } from './ui/panels/Local';
 
-const EFFORT_ORDER: Effort[] = ['low', 'medium', 'high'];
-
 export default function App(): React.ReactElement {
   const [state, setState] = useState<PersistedState>(() => loadState());
   const [panel, setPanel] = useState<PanelId>(null);
@@ -43,11 +37,14 @@ export default function App(): React.ReactElement {
   const [modelStatus, setModelStatus] = useState<Record<string, string>>({});
   const [testStatus, setTestStatus] = useState<Record<string, string>>({});
   const [pullState, setPullState] = useState<Record<string, PullState>>({});
+  const [daemonProbes, setDaemonProbes] = useState<DaemonProbe[]>([]);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     saveState(state);
   }, [state]);
+
+  const fetchModelsRef = useRef<(providerId: string) => void>(() => undefined);
 
   const patchState = useCallback((patch: Partial<PersistedState>) => {
     setState((previous) => ({ ...previous, ...patch }));
@@ -129,6 +126,96 @@ export default function App(): React.ReactElement {
     });
   }, []);
 
+  /* --------------------------------------------------------- local daemon */
+
+  const localProvider = useMemo(
+    () => state.providers.find((provider) => provider.protocol === 'ollama'),
+    [state.providers],
+  );
+
+  const applyDaemonUrl = useCallback((providerId: string, url: string) => {
+    setState((previous) => ({
+      ...previous,
+      providers: previous.providers.map((provider) =>
+        provider.id === providerId ? { ...provider, baseUrl: url, enabled: true } : provider,
+      ),
+    }));
+  }, []);
+
+  /**
+   * Makes sure the Ollama provider points at a daemon that answers.
+   *
+   * This is the actual fix for "cannot reach 127.0.0.1": rather than telling
+   * the user to edit a URL, probe the configured address and, if it is dead,
+   * try the loopback forms (Termux on this phone, the emulator host) and move
+   * the provider to whichever one replies.
+   */
+  const ensureDaemon = useCallback(
+    async (provider: Provider): Promise<{ provider: Provider; moved: boolean }> => {
+      if (provider.protocol !== 'ollama') {
+        return { provider, moved: false };
+      }
+      const direct = await probeDaemon(provider.baseUrl, 1400);
+      if (direct.ok) {
+        setDaemonProbes([direct]);
+        return { provider, moved: false };
+      }
+      const probes = await discoverDaemon(provider.baseUrl);
+      setDaemonProbes(probes);
+      const reachable = probes.find((probe) => probe.ok);
+      if (reachable && reachable.url !== provider.baseUrl) {
+        applyDaemonUrl(provider.id, reachable.url);
+        setNotice(`Reconnected to Ollama at ${reachable.url}.`);
+        return { provider: { ...provider, baseUrl: reachable.url }, moved: true };
+      }
+      return { provider, moved: false };
+    },
+    [applyDaemonUrl],
+  );
+
+  // On first paint, quietly check the local daemon so a stale address fixes
+  // itself before the user ever sends a message.
+  const bootstrapped = useRef(false);
+  useEffect(() => {
+    if (bootstrapped.current || !localProvider) {
+      return;
+    }
+    bootstrapped.current = true;
+    void probeDaemon(localProvider.baseUrl, 1200).then(async (direct) => {
+      if (direct.ok) {
+        setDaemonProbes([direct]);
+        return;
+      }
+      const probes = await discoverDaemon(localProvider.baseUrl);
+      setDaemonProbes(probes);
+      const reachable = probes.find((probe) => probe.ok);
+      if (reachable && reachable.url !== localProvider.baseUrl) {
+        applyDaemonUrl(localProvider.id, reachable.url);
+        setNotice(`Found your Ollama daemon at ${reachable.url}.`);
+        fetchModelsRef.current(localProvider.id);
+      }
+    });
+  }, [localProvider, applyDaemonUrl]);
+
+  const discoverLocal = useCallback(async () => {
+    if (!localProvider) {
+      return;
+    }
+    setTestStatus((previous) => ({ ...previous, [localProvider.id]: 'scanning…' }));
+    const probes = await discoverDaemon(localProvider.baseUrl);
+    setDaemonProbes(probes);
+    const reachable = probes.filter((probe) => probe.ok);
+    setTestStatus((previous) => ({
+      ...previous,
+      [localProvider.id]:
+        reachable.length > 0
+          ? `found ${reachable.length === 1 ? 'a daemon' : `${reachable.length} daemons`}: ${reachable
+              .map((probe) => probe.url.replace('http://', ''))
+              .join(', ')}`
+          : 'no daemon answered on this device',
+    }));
+  }, [localProvider]);
+
   /* ------------------------------------------------------------- models */
 
   const fetchModels = useCallback(
@@ -163,6 +250,8 @@ export default function App(): React.ReactElement {
     },
     [state.providers],
   );
+
+  fetchModelsRef.current = fetchModels;
 
   const testProvider = useCallback(
     (providerId: string) => {
@@ -242,33 +331,58 @@ export default function App(): React.ReactElement {
       if (!provider) {
         return;
       }
-      setPullState((previous) => ({ ...previous, [model]: { status: 'starting' } }));
-      void pullModel(provider, model, (progress: PullProgress) => {
-        setPullState((previous) => ({
-          ...previous,
-          [model]: {
-            status:
-              progress.percent !== undefined ? `${progress.status} ${progress.percent}%` : progress.status,
-            percent: progress.percent,
-          },
-        }));
-      })
-        .then((final) => {
-          setPullState((previous) => ({
-            ...previous,
-            [model]: { status: final.status, percent: final.status === 'success' ? 100 : final.percent },
-          }));
-          if (final.status === 'success') {
-            setNotice(`Pulled ${model}.`);
-            fetchModels(providerId);
-          }
-        })
-        .catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          setPullState((previous) => ({ ...previous, [model]: { status: 'failed', error: message } }));
+
+      const report = (update: PullState) =>
+        setPullState((previous) => ({ ...previous, [model]: update }));
+
+      const track = (progress: PullProgress) =>
+        report({
+          status:
+            progress.percent !== undefined ? `${progress.status} ${progress.percent}%` : progress.status,
+          percent: progress.percent,
         });
+
+      report({ status: 'starting' });
+
+      void (async () => {
+        // Same self-healing as chat: resolve the daemon before pulling so a
+        // stale loopback address does not fail the download.
+        const { provider: active } = await ensureDaemon(provider);
+        let target = active;
+        try {
+          const final = await pullModel(target, model, track);
+          report({ status: final.status, percent: final.status === 'success' ? 100 : final.percent });
+          if (final.status === 'success') {
+            setNotice(`Pulled ${modelShortName(model)}.`);
+            fetchModelsRef.current(providerId);
+          }
+          return;
+        } catch (error) {
+          if (target.protocol === 'ollama') {
+            const probes = await discoverDaemon(target.baseUrl);
+            setDaemonProbes(probes);
+            const reachable = probes.find((probe) => probe.ok);
+            if (reachable && reachable.url !== target.baseUrl) {
+              applyDaemonUrl(target.id, reachable.url);
+              try {
+                const final = await pullModel({ ...target, baseUrl: reachable.url }, model, track);
+                report({ status: final.status, percent: final.status === 'success' ? 100 : final.percent });
+                if (final.status === 'success') {
+                  setNotice(`Pulled ${modelShortName(model)}.`);
+                  fetchModelsRef.current(providerId);
+                }
+                return;
+              } catch {
+                // Report the original failure below.
+              }
+            }
+          }
+          const message = error instanceof Error ? error.message : String(error);
+          report({ status: 'failed', error: message });
+        }
+      })();
     },
-    [state.providers, fetchModels],
+    [state.providers, ensureDaemon, applyDaemonUrl],
   );
 
   /* ----------------------------------------------------------------- chat */
@@ -353,7 +467,11 @@ export default function App(): React.ReactElement {
       );
 
       const skillPrompt = buildSystemPrompt(state.skillIds, state.customSkills, state.systemPrompt);
-      const system = [state.settings.agentMode ? AGENT_PREAMBLE : '', skillPrompt]
+      const system = [
+        state.settings.agentMode ? AGENT_PREAMBLE : '',
+        state.settings.effort === 'ultracode' ? ULTRACODE_PREAMBLE : '',
+        skillPrompt,
+      ]
         .filter(Boolean)
         .join('\n\n');
 
@@ -376,7 +494,7 @@ export default function App(): React.ReactElement {
           model,
           messages: history,
           system: system || undefined,
-          maxTokens: state.settings.maxTokens,
+          maxTokens: effortMaxTokens(state.settings.effort, state.settings.maxTokens),
           effort: state.settings.effort,
           temperature: state.settings.temperature,
           signal: controller.signal,
@@ -398,14 +516,42 @@ export default function App(): React.ReactElement {
       const runWithFailover = async (target: ParallelTarget, messageId: string) => {
         const provider =
           state.providers.find((item) => item.id === target.providerId) ?? primary;
+        let active = provider;
         try {
-          await runOne(provider, target.model, messageId);
+          // A local daemon whose address went stale self-heals here, before the
+          // request is attempted.
+          if (provider.protocol === 'ollama') {
+            const ensured = await ensureDaemon(provider);
+            active = ensured.provider;
+          }
+          await runOne(active, target.model, messageId);
         } catch (error) {
           if (error instanceof DOMException && error.name === 'AbortError') {
             updateMessage(messageId, { content: '(stopped)' });
             return;
           }
           const failure = error instanceof Error ? error.message : String(error);
+
+          // If the daemon moved under us, retry once on the new address instead
+          // of reporting a connection error.
+          if (active.protocol === 'ollama') {
+            const retryProbe = await probeDaemon(active.baseUrl, 1400);
+            if (!retryProbe.ok) {
+              const probes = await discoverDaemon(active.baseUrl);
+              setDaemonProbes(probes);
+              const reachable = probes.find((probe) => probe.ok);
+              if (reachable) {
+                applyDaemonUrl(active.id, reachable.url);
+                try {
+                  await runOne({ ...active, baseUrl: reachable.url }, target.model, messageId);
+                  return;
+                } catch {
+                  // Fall through to the normal error handling.
+                }
+              }
+            }
+          }
+
           const alternative = state.failoverEnabled
             ? nextProvider(state.providers, state.usage, provider.id)
             : undefined;
@@ -508,14 +654,9 @@ export default function App(): React.ReactElement {
     [thread, patchThread, send],
   );
 
-  const cycleEffort = useCallback(() => {
-    setState((previous) => {
-      const index = EFFORT_ORDER.indexOf(previous.settings.effort);
-      const effort = EFFORT_ORDER[(index + 1) % EFFORT_ORDER.length];
-      return { ...previous, settings: { ...previous.settings, effort } };
-    });
-    setNotice(`Effort: ${EFFORT_LABELS[state.settings.effort]} → next send uses the new level.`);
-  }, [state.settings.effort]);
+  const setEffort = useCallback((effort: Effort) => {
+    setState((previous) => ({ ...previous, settings: { ...previous.settings, effort } }));
+  }, []);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -545,16 +686,6 @@ export default function App(): React.ReactElement {
 
   const openMenu = (target: MenuTarget) => setPanel(target);
 
-  const level = (() => {
-    const raw = usageLevel(activeProvider ? usageOf(state.usage, activeProvider.id) : undefined);
-    return (raw === 'ok' ? 'ok' : raw === 'warn' ? 'warn' : 'danger') as 'ok' | 'warn' | 'danger';
-  })();
-  const usageEntry = activeProvider ? usageOf(state.usage, activeProvider.id) : undefined;
-  const ratio = usageRatio(usageEntry);
-  const usageLabel = usageEntry?.limitTokens
-    ? `${Math.round(ratio * 100)}% of ${formatTokens(usageEntry.limitTokens)}`
-    : `${formatTokens((usageEntry?.promptTokens ?? 0) + (usageEntry?.completionTokens ?? 0))} tokens`;
-
   const installedByProvider = useMemo(() => {
     const map: Record<string, string[]> = {};
     for (const [providerId, models] of Object.entries(state.modelsByProvider)) {
@@ -563,7 +694,7 @@ export default function App(): React.ReactElement {
     return map;
   }, [state.modelsByProvider]);
 
-  const modelLabelForComposer = activeModel ? `${activeProvider?.name ?? ''} · ${activeModel}` : '';
+  const modelLabelForComposer = activeModel ? modelShortName(activeModel) : '';
 
   return (
     <div className="app">
@@ -572,14 +703,10 @@ export default function App(): React.ReactElement {
           title={thread?.title || 'New chat'}
           providerName={activeProvider?.name ?? ''}
           modelLabel={activeModel}
-          usageLabel={usageLabel}
-          usageLevel={level}
-          effort={state.settings.effort}
           parallelCount={state.parallel.length}
           pickerOpen={pickerOpen}
           onOpenMenu={() => setPanel('menu')}
           onTogglePicker={() => setPickerOpen((value) => !value)}
-          onCycleEffort={cycleEffort}
           onOpenPanel={setPanel}
           picker={
             <ModelPicker
@@ -638,7 +765,7 @@ export default function App(): React.ReactElement {
                 </button>
                 <button className="starter" onClick={() => setPanel('settings')}>
                   <strong>Set the effort</strong>
-                  Low, medium or high reasoning — and how much history to send.
+                  Minimal to Max, or Ultracode when it has to be right.
                 </button>
               </div>
             </div>
@@ -667,7 +794,7 @@ export default function App(): React.ReactElement {
             }))
           }
           onOpenPicker={() => setPickerOpen(true)}
-          onCycleEffort={cycleEffort}
+          onSetEffort={setEffort}
           onDismissNotice={() => setNotice(null)}
         />
       </main>
@@ -812,6 +939,8 @@ export default function App(): React.ReactElement {
           <LocalPanel
             providers={state.providers}
             testStatus={testStatus}
+            probes={daemonProbes}
+            onDiscover={discoverLocal}
             onUpdate={(providerId, patch) =>
               setState((previous) => ({
                 ...previous,

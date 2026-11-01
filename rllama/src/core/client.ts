@@ -5,6 +5,7 @@ import {
   parseModelList,
 } from './providers';
 import { advise, type ErrorAdvice } from './errors';
+import { apiEffort } from './settings';
 import { createNdjsonParser, createSseParser } from './sse';
 import { transportFetch } from './transport';
 import type { ChatMessage, Effort, ModelInfo, Protocol, Provider, TokenUsage } from './types';
@@ -156,7 +157,7 @@ export async function streamChat(request: StreamRequest): Promise<StreamResult> 
       model,
       messages: system ? [{ role: 'system', content: system }, ...messages] : messages,
       stream: true,
-      ...(effort === 'high' ? { think: true } : {}),
+      ...(effort && ['high', 'max', 'ultracode'].includes(effort) ? { think: true } : {}),
       ...(maxTokens || temperature !== undefined
         ? { options: { ...(maxTokens ? { num_predict: maxTokens } : {}), ...(temperature !== undefined ? { temperature } : {}) } }
         : {}),
@@ -237,7 +238,7 @@ export async function streamChat(request: StreamRequest): Promise<StreamResult> 
     }
     if (effort) {
       // Responses API uses the structured reasoning object.
-      payload.reasoning = { effort };
+      payload.reasoning = { effort: apiEffort(effort) };
     }
     if (temperature !== undefined) {
       payload.temperature = temperature;
@@ -318,7 +319,7 @@ export async function streamChat(request: StreamRequest): Promise<StreamResult> 
     if (effort) {
       // Chat Completions takes the flat field; gateways ignore it when they
       // do not support reasoning models.
-      payload.reasoning_effort = effort;
+      payload.reasoning_effort = apiEffort(effort);
     }
     const response = await post(url, headers, payload, signal, provider.protocol);
     const parser = createSseParser((event) => {
@@ -390,6 +391,17 @@ function contextLengths(payload: unknown): Record<string, number> {
   return found;
 }
 
+/** Adds a deadline without dropping the caller's own abort signal. */
+function withTimeout(signal: AbortSignal | undefined, ms: number): AbortSignal | undefined {
+  const anyFactory = (AbortSignal as unknown as { any?: (signals: AbortSignal[]) => AbortSignal }).any;
+  const timeoutFactory = (AbortSignal as unknown as { timeout?: (ms: number) => AbortSignal }).timeout;
+  if (!anyFactory || !timeoutFactory) {
+    return signal;
+  }
+  const deadline = timeoutFactory(ms);
+  return signal ? anyFactory([signal, deadline]) : deadline;
+}
+
 function safeJson(text: string): Record<string, unknown> | null {
   try {
     const value = JSON.parse(text);
@@ -404,7 +416,7 @@ export async function listModels(provider: Provider, signal?: AbortSignal): Prom
   const url = modelsEndpoint(provider.protocol, provider.baseUrl);
   let response: Response;
   try {
-    response = await transportFetch(url, { headers: authHeaders(provider) }, signal);
+    response = await transportFetch(url, { headers: authHeaders(provider) }, withTimeout(signal, 12_000));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new ProviderError(0, message, url, provider.protocol);

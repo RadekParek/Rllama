@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import type { Provider } from '../../core/types';
-import { IconCheck, IconRefresh } from '../Icons';
+import type { DaemonProbe } from '../../core/ollama';
+import { IconCheck, IconRefresh, IconSearch } from '../Icons';
 
 export interface LocalPanelProps {
   providers: Provider[];
   testStatus: Record<string, string>;
+  probes: DaemonProbe[];
+  onDiscover: () => Promise<void>;
   onUpdate: (providerId: string, patch: Partial<Provider>) => void;
   onTest: (providerId: string) => void;
 }
@@ -70,6 +73,10 @@ export function LocalPanel(props: LocalPanelProps): React.ReactElement {
           <IconCheck width={12} height={12} />
           Test connection
         </button>
+        <button className="btn tiny" onClick={() => void props.onDiscover()}>
+          <IconSearch width={12} height={12} />
+          Find daemon
+        </button>
         <button
           className="btn tiny"
           onClick={() => {
@@ -83,6 +90,28 @@ export function LocalPanel(props: LocalPanelProps): React.ReactElement {
         </button>
       </div>
       {status ? <div className="hint">{status}</div> : null}
+
+      {props.probes.length > 0 ? (
+        <div className="probe-list">
+          {props.probes.map((probe) => (
+            <button
+              key={probe.url}
+              className={`probe ${probe.ok ? 'ok' : ''}`}
+              onClick={() => {
+                props.onUpdate(local.id, { baseUrl: probe.url, enabled: true });
+                setUrl(probe.url);
+              }}
+              title={probe.ok ? 'Use this daemon' : probe.error}
+            >
+              <span className={`dot ${probe.ok ? 'ok' : 'danger'}`} />
+              <code>{probe.url.replace('http://', '')}</code>
+              <span className="probe-note">
+                {probe.ok ? (probe.version ? `ollama ${probe.version}` : 'reachable') : 'no answer'}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div className="section-label" style={{ padding: '10px 0 0' }}>
         Run Ollama on this phone (Termux)
