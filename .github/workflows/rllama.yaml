@@ -148,8 +148,29 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x android/gradlew
-          cd android
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          log="$RUNNER_TEMP/gradle.log"
+          if (cd android && ./gradlew --no-daemon --stacktrace assembleDebug) >"$log" 2>&1; then
+            tail -n 20 "$log"
+            exit 0
+          fi
+          # Surface the real cause as check-run annotations; the raw log is not
+          # always reachable from outside the run.
+          echo "::error::Gradle failed to build the APK"
+          grep -nE "error:|FAILURE:|What went wrong|Execution failed|Could not (resolve|find|download|install)|Unsupported|requires|Caused by|> Task .* FAILED" "$log" \
+            | head -n 25 \
+            | while IFS= read -r line; do echo "::error::${line}"; done || true
+          echo "----- last 120 log lines -----"
+          tail -n 120 "$log"
+          exit 1
+
+      - name: Upload the Gradle log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rllama-android-gradle-log
+          path: ${{ runner.temp }}/gradle.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Verify the APK
         shell: bash
