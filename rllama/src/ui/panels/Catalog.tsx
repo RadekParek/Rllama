@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { CATALOG_SNAPSHOT, OLLAMA_CATALOG, filterCatalog, searchCatalog } from '../../core/catalog';
+import { localDaemon } from '../../core/ollama';
 import type { CatalogModel, Provider } from '../../core/types';
 import { IconDownload, IconSearch } from '../Icons';
 
@@ -30,7 +31,10 @@ export function CatalogPanel(props: CatalogPanelProps): React.ReactElement {
   const ollamaProviders = props.providers.filter(
     (provider) => provider.protocol === 'ollama' || provider.templateId.includes('ollama'),
   );
-  const target = ollamaProviders[0];
+  // Downloads go to the daemon, never to Ollama Cloud: the cloud service answers
+  // a pull with an HTML 403 page, which is exactly the error this panel used to
+  // hand the user.
+  const target = localDaemon(props.providers);
 
   const items = useMemo(
     () => filterCatalog(searchCatalog(OLLAMA_CATALOG, query), { where, capability }),
@@ -54,7 +58,10 @@ export function CatalogPanel(props: CatalogPanelProps): React.ReactElement {
 
       {!target ? (
         <div className="banner">
-          <span className="grow">Add a local Ollama provider to download models.</span>
+          <span className="grow">
+            Add a local Ollama provider to download models. Ollama Cloud can chat with cloud models, but it cannot
+            download them.
+          </span>
           <button className="btn tiny" onClick={props.onOpenProviders}>
             Open providers
           </button>

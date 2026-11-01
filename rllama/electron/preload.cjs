@@ -111,9 +111,50 @@ function request(payload) {
   });
 }
 
+let terminalCounter = 0;
+
+/**
+ * Runs a shell command in the main process and streams its output back.
+ * Resolves when the command exits, with its status code.
+ */
+function exec(command, onChunk) {
+  return new Promise((resolve) => {
+    const id = `term-${Date.now()}-${terminalCounter++}`;
+
+    const onData = (_event, payload) => {
+      if (payload && payload.id === id && typeof onChunk === 'function') {
+        try {
+          onChunk(payload.chunk, payload.stream);
+        } catch {
+          // A renderer-side rendering error must not kill the command.
+        }
+      }
+    };
+    const onExit = (_event, payload) => {
+      if (!payload || payload.id !== id) {
+        return;
+      }
+      cleanup();
+      resolve({ code: payload.code, aborted: false, id });
+    };
+    function cleanup() {
+      ipcRenderer.removeListener('rllama:term:data', onData);
+      ipcRenderer.removeListener('rllama:term:exit', onExit);
+    }
+
+    ipcRenderer.on('rllama:term:data', onData);
+    ipcRenderer.on('rllama:term:exit', onExit);
+    ipcRenderer.send('rllama:term:run', { id, command });
+  });
+}
+
 contextBridge.exposeInMainWorld('rllama', {
   isDesktop: true,
   platform: process.platform,
   request,
   abort: (id) => ipcRenderer.send('rllama:http:abort', id),
+  exec,
+  killTerminal: (id) => ipcRenderer.send('rllama:term:kill', id),
+  scanLan: (port) => ipcRenderer.invoke('rllama:lan:scan', { port }),
+  startOllama: () => ipcRenderer.invoke('rllama:ollama:start'),
 });

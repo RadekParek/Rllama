@@ -48,7 +48,8 @@ signup. The 90 % behaviour is a provider switch, not a quota reset.
   that key can actually use appear in the picker, grouped by provider.
 - **Ollama catalogue**: 51 models snapshotted from ollama.com/search, searchable
   and filterable, with real `/api/pull` progress; any other model can be pulled
-  by name — e.g. `treyleo16/claude-mythos-5-1`.
+  by name. Pulls only ever go to a local daemon, because Ollama Cloud answers
+  `/api/pull` with an HTML 403 page.
 - **Skills**: caveman, REA and OpenRouter ship pre-installed (plus planner,
   reviewer, debugger, spec, token-frugal and your own markdown packs), toggleable
   from the composer, the Skills drawer, or `/caveman` style commands.
@@ -59,11 +60,24 @@ signup. The 90 % behaviour is a provider switch, not a quota reset.
   an animated gradient for Ultracode). Each level maps onto the provider's own
   controls: `reasoning_effort`, `reasoning: {effort}`, or Ollama's `think` flag.
   Ultracode adds a verify-every-step directive and a larger reply budget.
+- **Terminal, wired to a real shell**: on the desktop build the Terminal panel
+  streams commands from your shell; on Android it hands them to Termux through
+  its RUN_COMMAND service, so Termux and Rllama run side by side and Termux stays
+  the backend. `/run <command>` in the composer runs one command and puts its
+  output in the conversation, so a question can be answered by the device and
+  shown in Rllama.
+- **Models from anywhere**: Hugging Face GGUF repositories are pulled straight
+  into the daemon (`hf.co/<repo>:<quant>`), and GGUF files already on the phone —
+  including models exported from PocketPal — are listed and imported with
+  `ollama create` through the same shell bridge.
 - **Local Ollama that finds itself**: on start and before every local request the
   app probes the configured address plus the loopback forms (`127.0.0.1`,
   `localhost`, `10.0.2.2`, `[::1]`) and moves to whichever daemon answers, so a
-  stale address no longer strands the app. **Local backend → Find daemon** shows
-  every address it tried and switches on tap.
+  stale address no longer strands the app, and a real subnet scan (desktop main
+  process, or the Android plugin) finds Ollama on another machine. **Local
+  backend → Find daemon / Scan network** shows every address it tried and
+  switches on tap; **Start Ollama** launches the daemon through the shell or
+  Termux instead of asking you to do it.
 
 ## Build and run
 

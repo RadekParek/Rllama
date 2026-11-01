@@ -27,6 +27,17 @@ export interface DesktopBridge {
   platform: string;
   request: (request: DesktopRequest) => Promise<Response>;
   abort: (id: string) => void;
+  /** Runs a shell command on the desktop machine, streaming its output. */
+  exec?: (
+    command: string,
+    onChunk?: (chunk: string, stream: 'out' | 'err') => void,
+  ) => Promise<{ code: number | null; aborted: boolean; id?: string }>;
+  /** Stops a command started through `exec`. */
+  killTerminal?: (id: string) => void;
+  /** Scans this machine's subnets for an open daemon port. */
+  scanLan?: (port: number) => Promise<{ hosts: string[]; interfaces: string[] }>;
+  /** Starts `ollama serve` detached, if Ollama is installed here. */
+  startOllama?: () => Promise<{ started: boolean; message?: string }>;
 }
 
 declare global {

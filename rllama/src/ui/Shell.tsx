@@ -25,6 +25,7 @@ export type PanelId =
   | 'mcp'
   | 'cli'
   | 'local'
+  | 'models'
   | null;
 
 /* ------------------------------------------------------------------ top bar */

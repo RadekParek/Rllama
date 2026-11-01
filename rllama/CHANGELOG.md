@@ -5,6 +5,75 @@ Plain-language record of every change, newest first. "Added" = new capability,
 
 ---
 
+## 2026-11-01 — session 7: pulls that work, a real terminal, models from anywhere
+
+### Added
+
+- **Terminal panel** (Menu → Terminal CLI) with a Codex-style surface: prompt,
+  streamed output, command history (↑/↓), Ctrl+L to clear, and one-tap chips for
+  `ollama serve`, `list`, `ps`, `--version` and disk use. Commands run on the
+  desktop shell (Electron main process, streamed) or — on Android — in **Termux
+  through its RUN_COMMAND service**, so Termux and Rllama run side by side and
+  Termux remains the backend. The web build says plainly that it has no shell.
+- **`/run <command>` in the composer**: one shell command, its output posted into
+  the conversation. This is the "ask it in Termux, see it in Rllama" path.
+- **Native Android plugin** `RllamaNative`: subnet scan for port 11434, Termux
+  status/run/open, and GGUF listing on shared storage. Registered in
+  `MainActivity`, declared in the manifest with the Termux RUN_COMMAND
+  permission and `READ_EXTERNAL_STORAGE` (≤ 32) plus a `<queries>` entry.
+- **Scan network** in Local backend: a real scan of this machine's /24 subnets
+  (Electron main process on desktop, the plugin on Android), every answer probed
+  for `/api/version`, tap to switch.
+- **Start Ollama**: launches `ollama serve` through the desktop shell (detached)
+  or Termux, then re-probes. The daemon no longer has to be started by hand.
+- **Local models panel**: Hugging Face GGUF search (repo → files → the exact
+  `hf.co/<repo>:<quant>` reference, pulled into the daemon with the ordinary
+  `/api/pull`) and a device scan that lists `.gguf` files in `Download/`,
+  `Models/`, `PocketPal/` and imports the chosen one with `ollama create`,
+  showing the command and its output.
+
+### Changed
+
+- **Pulls only go to a local daemon.** This is the actual fix for
+  `HTTP 403 — 403` with an HTML body: with an Ollama Cloud provider present, the
+  pull was being sent to `https://ollama.com/v1/api/pull`, which is Cloudflare,
+  not a daemon. `planPull()` now picks the local daemon (never a cloud one),
+  refuses `-cloud` models before any request, and explains both cases in one
+  sentence. `pullModel()` takes a daemon URL, normalises a stray `/v1`, and sends
+  no credentials.
+- **Daemon discovery got a second gear**: loopback probes → LAN scan once per
+  session → reconnect and retry. Addresses are normalised (`/v1`, trailing
+  slash).
+- Ollama errors are short: `No Ollama daemon answered at …`, `Pull failed
+  (HTTP 404)`, and the HTML-403 case names the two real causes instead of dumping
+  a page.
+- The **catalogue's pull target** is the local daemon, and its empty state says
+  that Ollama Cloud can chat but cannot download.
+
+### Removed
+
+- The old copy-only "Terminal CLI" text panel as the menu target (its command
+  cheatsheet lives on in `CliPanel`, no longer wired to the menu).
+
+### Not delivered, on purpose
+
+- Termux itself is **not vendored into this repository**. It is GPLv3, ~100 MB
+  with submodules, and bundling it would mean shipping someone else's app inside
+  Rllama. The integration is the supported RUN_COMMAND intent instead: install
+  Termux from F-Droid, allow external commands, and Rllama drives it.
+- PocketPal's private model directory is not readable by another app on
+  Android 11+. Rllama scans shared storage instead; models exported or copied to
+  `Download/` are listed and importable.
+
+### Tests
+
+- New `src/core/__tests__/local.test.ts` (18 cases): pull planning incl. the
+  403 path, daemon URL normalisation, cloud detection, `pullModel` refusing
+  ollama.com and reporting 403/404, Hugging Face reference building and repo
+  parsing, terminal fallback, and the GGUF import command. Suite **89/89**.
+
+---
+
 ## 2026-11-01 — session 6: working local daemon, six effort levels, tighter UI
 
 ### Added
