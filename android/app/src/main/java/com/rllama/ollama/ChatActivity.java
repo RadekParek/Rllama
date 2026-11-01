@@ -78,15 +78,15 @@ public class ChatActivity extends AppCompatActivity {
             @Override
             public void run() {
                 final List<String> loaded = new ArrayList<>();
-                final String error;
+                String failure = null;
                 try {
                     for (OllamaHttp.Model model : OllamaHttp.listModels(prefs.port())) {
                         loaded.add(model.name);
                     }
-                    error = null;
                 } catch (Exception e) {
-                    error = e.getMessage();
+                    failure = e.getMessage();
                 }
+                final String error = failure;
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
