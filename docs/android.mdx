@@ -44,6 +44,14 @@ The long-press menu copies the transcript, the ↑/↓ keys recall previous
 commands, and **Stop** interrupts the running command. The foreground service
 keeps the server alive when you leave the app.
 
+While a command is running, **Run** sends what you typed to that process's
+standard input instead of starting a new command, so the interactive
+`ollama run <model>` prompt works: type your message and press **Run** again.
+
+If the app ever fails to start, the previous crash is printed at the top of the
+console (and kept in `last-crash.txt` in the app's private directory), so the
+failure can be reported instead of just disappearing.
+
 Ollama's defaults are untouched: models live in `$HOME/.ollama/models` inside
 the app's private directory, and the API listens on `127.0.0.1:11434`. Because
 the server binds the loopback interface only, other devices cannot reach it;
@@ -69,13 +77,17 @@ OLLAMA_HOST=http://127.0.0.1:11434
 | --- | --- | --- |
 | Ollama Go server + CLI | `lib/arm64-v8a/libollama.so` | 40,585,696 B |
 | llama.cpp inference server (CPU, static) | `lib/arm64-v8a/libllama-server.so` | 16,169,816 B |
-| App: console, foreground service, process host | `classes*.dex` | ~10,100,000 B |
+| App: console, foreground service, process host | `classes*.dex` | ~65,000 B |
 | Third-party license texts | `assets/licenses/` | small |
 
-Sizes are from the CI build of the current commit; the **APK itself is
-27,420,158 bytes** (~26 MiB; a few bytes move between builds because the
-version string is embedded) because the entries are deflated, and it occupies
-about 67 MB once installed, before any model is pulled.
+The app has no AndroidX or Material dependency — the console uses platform
+widgets and platform notification APIs (minSdk 26) — so the app code is about
+65 KB of dex instead of several megabytes.
+
+Measured by the `android` workflow on the current commit: **APK 21,880,013 bytes**
+(≈20.9 MiB). The two binaries dominate and are deflated inside the APK, so the
+installed footprint is roughly 57 MB before any model is pulled. A few bytes
+move between builds because the version string is embedded.
 
 Android only extracts APK entries named `lib*.so` into the executable native
 library directory, which is why the two executables carry that name; they are
@@ -158,3 +170,9 @@ they passed.
   registry; try another network or import a GGUF file with `ollama create`.
 - **`llama-server` not found by the server** — the copy lost its executable bit;
   rebuild the payload with `scripts/build_android.sh` (it applies `chmod 0755`).
+- **The console shows "native payload missing"** — the APK was packaged without
+  the native payload; check that `android/app/src/main/jniLibs/arm64-v8a/`
+  contained both `.so` files when Gradle ran.
+- **The app closes immediately on launch** — reopen it: the crash report from
+  the previous run is printed in the console and saved to `last-crash.txt`;
+  that text is what to report.

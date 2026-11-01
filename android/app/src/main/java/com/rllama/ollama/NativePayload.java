@@ -23,6 +23,9 @@ import java.util.concurrent.TimeUnit;
  * {@code libollama.so} and llama.cpp's server as {@code libllama-server.so},
  * side by side in {@code lib/arm64-v8a/}. This class is the only Android
  * specific part of the runtime: everything else is stock Ollama.
+ *
+ * <p>Nothing here may run on the main thread: resolving the payload starts a
+ * child process to prove the binaries are executable.
  */
 public final class NativePayload {
     public static final String OLLAMA_LIB_NAME = "libollama.so";
@@ -33,18 +36,20 @@ public final class NativePayload {
     private NativePayload() {
     }
 
-    /** Directories that may contain the extracted binaries, in lookup order. */
+    /** Directory the installer extracts the packaged binaries into. */
     public static File nativeLibDir(Context context) {
-        return new File(context.getApplicationInfo().nativeLibraryDir);
+        String dir = context.getApplicationContext().getApplicationInfo().nativeLibraryDir;
+        return dir == null ? new File("/") : new File(dir);
     }
 
     /**
      * Directory holding both executables, resolved once per process.
      *
      * <p>Normally this is the native library directory. If a device refuses to
-     * execute files there (some vendor images mount {@code /data} differently),
-     * the binaries are copied into {@code filesDir/payload}, made executable and
-     * used from there instead.
+     * execute files there, the binaries are copied into
+     * {@code filesDir/payload}, made executable and used from there instead.
+     *
+     * <p>Blocking (starts a probe process); call it from a worker thread.
      */
     public static File payloadDir(Context context) {
         File cached = resolvedDir;
@@ -91,7 +96,8 @@ public final class NativePayload {
     }
 
     public static boolean hasOllama(Context context) {
-        return ollamaBinary(context).isFile();
+        return new File(nativeLibDir(context), OLLAMA_LIB_NAME).isFile()
+                || new File(context.getFilesDir(), "payload/" + OLLAMA_LIB_NAME).isFile();
     }
 
     /** Tries to make a payload file executable; returns its final state. */
@@ -102,11 +108,19 @@ public final class NativePayload {
         if (file.canExecute()) {
             return true;
         }
-        boolean ok = file.setExecutable(true, false);
-        return ok && file.canExecute();
+        try {
+            return file.setExecutable(true, false) && file.canExecute();
+        } catch (SecurityException e) {
+            return false;
+        }
     }
 
-    /** Runs {@code <binary> --version} to prove the file can really be executed. */
+    /**
+     * Runs {@code <binary> --version} to prove the file can really be executed.
+     *
+     * <p>Uses {@link #baseEnvironment} and never {@link #environment}, because
+     * the latter resolves the payload directory and would recurse.
+     */
     static boolean canRun(File binary, Context context) {
         if (binary == null || !binary.isFile() || !binary.canExecute()) {
             return false;
@@ -115,7 +129,9 @@ public final class NativePayload {
         try {
             ProcessBuilder builder = new ProcessBuilder(binary.getAbsolutePath(), "--version");
             builder.redirectErrorStream(true);
-            builder.environment().putAll(environment(context));
+            builder.directory(context.getApplicationContext().getFilesDir());
+            builder.environment().clear();
+            builder.environment().putAll(baseEnvironment(context));
             process = builder.start();
             return process.waitFor(15, TimeUnit.SECONDS) && process.exitValue() == 0;
         } catch (Exception e) {
@@ -127,28 +143,35 @@ public final class NativePayload {
         }
     }
 
-    /**
-     * The environment for the Ollama process.
-     *
-     * <p>Ollama's own defaults are left untouched: only the variables that a
-     * desktop shell would also provide are set, so model storage stays at
-     * {@code $HOME/.ollama/models} and the server listens on the stock
-     * {@code 127.0.0.1:11434}.
-     */
-    public static Map<String, String> environment(Context context) {
+    /** Environment fragment that does not depend on where the payload lives. */
+    private static Map<String, String> baseEnvironment(Context context) {
         Context app = context.getApplicationContext();
-        Map<String, String> env = new HashMap<>(System.getenv());
-
+        Map<String, String> env = new HashMap<>();
         File home = homeDir(app);
         File tmp = app.getCacheDir();
         mkdirs(home);
         mkdirs(tmp);
-
         env.put("HOME", home.getAbsolutePath());
         env.put("TMPDIR", tmp.getAbsolutePath());
-        env.put("PATH", payloadDir(app).getAbsolutePath() + ":/system/bin:/system/xbin");
-        // Non-ASCII model names and prompts are UTF-8 everywhere on desktop.
+        env.put("PATH", nativeLibDir(app).getAbsolutePath() + ":/system/bin:/system/xbin");
         env.put("LANG", "C.UTF-8");
+        return env;
+    }
+
+    /**
+     * The environment for the Ollama process.
+     *
+     * <p>Ollama's own defaults are left untouched: only the variables a desktop
+     * shell also provides are set, so model storage stays at
+     * {@code $HOME/.ollama/models} and the server listens on the stock
+     * {@code 127.0.0.1:11434}.
+     *
+     * <p>Blocking (resolves the payload); call it from a worker thread.
+     */
+    public static Map<String, String> environment(Context context) {
+        Context app = context.getApplicationContext();
+        Map<String, String> env = baseEnvironment(app);
+        env.put("PATH", payloadDir(app).getAbsolutePath() + ":/system/bin:/system/xbin");
         return env;
     }
 
@@ -157,12 +180,12 @@ public final class NativePayload {
         return new File(context.getApplicationContext().getFilesDir(), "home");
     }
 
-    /** Directory holding downloaded models, as Ollama itself resolves it. */
+    /** Where Ollama stores models, as Ollama itself resolves it. */
     public static File modelsDir(Context context) {
         return new File(homeDir(context), ".ollama/models");
     }
 
-    /** One line that describes what is actually installed, for the console. */
+    /** What is actually installed, for the console. Blocking. */
     public static String describe(Context context) {
         File dir = payloadDir(context);
         return "payload " + dir.getAbsolutePath()
@@ -181,6 +204,50 @@ public final class NativePayload {
         return file.getName() + ": ok (" + file.length() + " bytes)";
     }
 
+    /** Output of {@code ollama --version}, or the reason it could not run. Blocking. */
+    public static String version(Context context) {
+        File binary = new File(payloadDir(context), OLLAMA_LIB_NAME);
+        if (!binary.isFile()) {
+            return "ollama: missing at " + binary.getAbsolutePath();
+        }
+        if (!ensureExecutable(binary)) {
+            return "ollama: not executable at " + binary.getAbsolutePath();
+        }
+        Process process = null;
+        try {
+            ProcessBuilder builder = new ProcessBuilder(binary.getAbsolutePath(), "--version");
+            builder.redirectErrorStream(true);
+            builder.directory(context.getApplicationContext().getFilesDir());
+            builder.environment().clear();
+            builder.environment().putAll(environment(context));
+            process = builder.start();
+            StringBuilder out = new StringBuilder();
+            InputStream in = process.getInputStream();
+            byte[] buffer = new byte[512];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                out.append(new String(buffer, 0, read, "UTF-8"));
+            }
+            boolean finished = process.waitFor(20, TimeUnit.SECONDS);
+            String text = out.toString().trim();
+            if (!finished) {
+                return "ollama: --version timed out";
+            }
+            if (process.exitValue() != 0) {
+                return "ollama: --version exited " + process.exitValue()
+                        + (text.isEmpty() ? "" : " (" + text + ")");
+            }
+            return text.isEmpty() ? "ollama: ok" : text.replace('\n', ' ');
+        } catch (Exception e) {
+            return "ollama: could not run (" + e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : ": " + e.getMessage()) + ")";
+        } finally {
+            if (process != null) {
+                process.destroy();
+            }
+        }
+    }
+
     private static boolean copyFile(File from, File to) {
         if (!from.isFile()) {
             return false;
@@ -190,7 +257,12 @@ public final class NativePayload {
         try {
             in = new FileInputStream(from);
             out = new FileOutputStream(to);
-            copy(in, out);
+            byte[] buffer = new byte[1 << 16];
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                out.write(buffer, 0, read);
+            }
+            out.flush();
             return true;
         } catch (IOException e) {
             return false;
@@ -198,15 +270,6 @@ public final class NativePayload {
             closeQuietly(in);
             closeQuietly(out);
         }
-    }
-
-    private static void copy(InputStream in, OutputStream out) throws IOException {
-        byte[] buffer = new byte[1 << 16];
-        int read;
-        while ((read = in.read(buffer)) > 0) {
-            out.write(buffer, 0, read);
-        }
-        out.flush();
     }
 
     private static void closeQuietly(Closeable closeable) {

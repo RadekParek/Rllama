@@ -18,7 +18,7 @@
         android:layout_height="0dp"
         android:layout_marginTop="6dp"
         android:layout_weight="1"
-        android:background="?attr/colorSurfaceVariant"
+        android:background="@color/console_background"
         android:padding="8dp">
 
         <TextView
@@ -61,7 +61,6 @@
 
         <Button
             android:id="@+id/terminalStop"
-            style="?attr/materialButtonOutlinedStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
@@ -70,7 +69,6 @@
 
         <Button
             android:id="@+id/terminalClear"
-            style="?attr/materialButtonOutlinedStyle"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"

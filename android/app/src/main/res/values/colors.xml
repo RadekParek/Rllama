@@ -2,4 +2,6 @@
 <resources>
     <!-- The Ollama app icon: white llama on the black mark used by the desktop app. -->
     <color name="ollama_icon_background">#FF0A0A0A</color>
+    <!-- Console surface; the app uses platform widgets only. -->
+    <color name="console_background">#FF121216</color>
 </resources>
