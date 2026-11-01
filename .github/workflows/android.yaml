@@ -124,14 +124,27 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for payload in \
-            android/app/src/main/jniLibs/arm64-v8a/libollama.so \
-            android/app/src/main/jniLibs/arm64-v8a/libllama-server.so
-          do
+          dir=android/app/src/main/jniLibs/arm64-v8a
+          for payload in "$dir/libollama.so" "$dir/libllama-server.so"; do
             [ -f "$payload" ] || { echo "::error::missing $payload"; exit 1; }
             file "$payload"
             ls -l "$payload"
+            readelf -h "$payload" | grep -E 'Class:|Machine:|Type:'
+            if ! readelf -h "$payload" | grep -q 'AArch64'; then
+              echo "::error::$payload is not an AArch64 binary"
+              exit 1
+            fi
+            if ! readelf -h "$payload" | grep -q 'DYN'; then
+              echo "::error::$payload is not a PIE binary; Android refuses to run it"
+              exit 1
+            fi
           done
+          # The Go binary must use Android's dynamic loader, not glibc's.
+          if ! readelf -l "$dir/libollama.so" | grep -q 'linker64'; then
+            echo "::error::libollama.so does not request /system/bin/linker64; it was not built for Android"
+            exit 1
+          fi
+          echo "payload looks like a valid Android arm64 PIE"
 
       - uses: actions/upload-artifact@v4
         with:
