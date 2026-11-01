@@ -37,14 +37,59 @@ to reset a provider's quota. That is a terms-of-service violation, it gets keys
 and IPs banned, and it would make the app useless the moment a provider tightens
 signup. The 90 % behaviour is a provider switch, not a quota reset.
 
-## Develop
+## Build and run
+
+One codebase, three targets.
 
 ```shell
 cd rllama
 npm install
-npm run dev          # http://localhost:5173
-npm test             # unit tests
-npm run build        # production bundle in dist/
+
+# web (development)
+npm run dev              # http://localhost:5173
+
+# desktop (Electron)
+npm run desktop          # build + run the desktop app
+npm run desktop:dist     # installers into release/ (AppImage, NSIS, dmg)
+
+# android (Capacitor)
+npm run android:sync     # build the bundle and copy it into android/
+npm run android:build    # -> android/app/build/outputs/apk/debug/app-debug.apk
+
+npm test                 # unit tests
+npm run build            # production bundle in dist/
+```
+
+CI (`.github/workflows/rllama.yaml`) builds all three: `rllama-web`,
+`rllama-linux`, `rllama-windows` and `rllama-android-apk`.
+
+### Why the shells exist
+
+Browsers block cross-origin requests, and AI gateways rarely send CORS headers.
+Each shell solves that once, natively:
+
+| Target | Transport | Key storage |
+| --- | --- | --- |
+| Desktop (Electron) | IPC to the main process, plain Node `fetch` | OS-level secure storage (next step) |
+| Android (Capacitor) | `CapacitorHttp` native stack | app-private storage |
+| Web | browser `fetch` (works where the gateway allows CORS) | local storage |
+
+Everything else — providers, skills, usage ledger, failover — is identical.
+
+## Icons
+
+All icons are PNG. `scripts/make-icons.py` (Pillow) derives every size from
+`build/icon-source.png`:
+
+- `build/icon.png`, `build/icon-512.png` — desktop packaging
+- `public/icons/*.png` — favicon, PWA, iOS home screen
+- `android/app/src/main/res/mipmap-*/ic_launcher*.png` — launcher, round icon and
+  adaptive-icon foreground (108dp canvas, mark inside the safe zone)
+- `android/app/src/main/res/drawable/splash.png` — launch screen
+
+```shell
+python3 -m pip install pillow
+python3 scripts/make-icons.py
 ```
 
 ## Layout

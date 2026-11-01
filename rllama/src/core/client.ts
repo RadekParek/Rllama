@@ -5,6 +5,7 @@ import {
   parseModelList,
 } from './providers';
 import { createNdjsonParser, createSseParser } from './sse';
+import { transportFetch } from './transport';
 import type { ChatMessage, ModelInfo, Provider, TokenUsage } from './types';
 
 /** An HTTP or protocol failure from a provider. */
@@ -81,12 +82,15 @@ function estimateTokens(text: string): number {
 async function post(url: string, headers: Record<string, string>, body: unknown, signal?: AbortSignal): Promise<Response> {
   let response: Response;
   try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(body),
+    response = await transportFetch(
+      url,
+      {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      },
       signal,
-    });
+    );
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw error;
@@ -274,7 +278,7 @@ export async function listModels(provider: Provider, signal?: AbortSignal): Prom
   const url = modelsEndpoint(provider.protocol, provider.baseUrl);
   let response: Response;
   try {
-    response = await fetch(url, { headers: authHeaders(provider), signal });
+    response = await transportFetch(url, { headers: authHeaders(provider) }, signal);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new ProviderError(0, message);
