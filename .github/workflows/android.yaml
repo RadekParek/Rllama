@@ -315,6 +315,34 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Verify the APK contains an executable payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(ls android/app/build/outputs/apk/debug/*.apk | head -1)"
+          echo "inspecting $apk"
+          for lib in lib/arm64-v8a/libollama.so lib/arm64-v8a/libllama-server.so; do
+            entry="$(unzip -lv "$apk" | grep " $lib" || true)"
+            if [ -z "$entry" ]; then
+              echo "::error::$apk is missing $lib"
+              exit 1
+            fi
+            echo "$entry"
+            # With useLegacyPackaging/extractNativeLibs the payload is stored
+            # *compressed* and unpacked by the installer; with the modern
+            # default it stays uncompressed inside the APK, which Android maps
+            # read-only and refuses to execute.
+            case "$entry" in
+              *Defl*) echo "  -> compressed: extracted on install (executable)" ;;
+              *)
+                echo "::error::$lib is stored uncompressed; the installer will not extract it, so the app cannot execute it"
+                exit 1
+                ;;
+            esac
+          done
+          unzip -l "$apk" | grep -E "assets/licenses" || true
+          echo "APK payload verified"
+
       - name: Rename artifacts
         shell: bash
         run: |
