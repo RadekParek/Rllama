@@ -37,6 +37,24 @@ to reset a provider's quota. That is a terms-of-service violation, it gets keys
 and IPs banned, and it would make the app useless the moment a provider tightens
 signup. The 90 % behaviour is a provider switch, not a quota reset.
 
+## What it does
+
+- **Chat over four wire protocols**: OpenAI chat-completions, OpenAI Responses
+  (`/responses`, the `wire_api = "responses"` mode Codex uses), Anthropic
+  messages, and Ollama native. One provider card switches between them.
+- **Key-only providers**: Ollama Cloud, AgentRouter, OpenRouter, Anthropic,
+  OpenAI, DeepSeek, Kimi, Groq, Gemini, Mistral, plus any compatible endpoint.
+- **Model discovery**: press “Load models” (or just enter a key) and the models
+  that key can actually use appear in the picker, grouped by provider.
+- **Ollama catalogue**: 51 models snapshotted from ollama.com/search, searchable
+  and filterable, with real `/api/pull` progress; any other model can be pulled
+  by name — e.g. `treyleo16/claude-mythos-5-1`.
+- **Skills**: caveman, REA and OpenRouter ship pre-installed (plus planner,
+  reviewer, debugger, spec, token-frugal and your own markdown packs), toggleable
+  from the composer, the Skills drawer, or `/caveman` style commands.
+- **Usage ledger with automatic failover**: warns at 75% of a budget and
+  continues on the next provider at 90%, or immediately on 401/402/429/5xx.
+
 ## Build and run
 
 One codebase, three targets.

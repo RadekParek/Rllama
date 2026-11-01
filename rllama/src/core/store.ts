@@ -1,6 +1,6 @@
 import { providerFromTemplate, templateById } from './providers';
 import { emptyUsage, type UsageMap } from './usage';
-import type { Provider, Skill, Thread } from './types';
+import type { ModelInfo, Provider, Skill, Thread } from './types';
 
 export interface PersistedState {
   version: number;
@@ -9,6 +9,8 @@ export interface PersistedState {
   activeThreadId?: string;
   /** Last model used per provider, so switching back keeps the choice. */
   modelByProvider: Record<string, string>;
+  /** Models each key actually exposes, cached so a reload is not a blank list. */
+  modelsByProvider: Record<string, ModelInfo[]>;
   usage: UsageMap;
   customSkills: Skill[];
   skillIds: string[];
@@ -42,9 +44,10 @@ export function emptyState(): PersistedState {
     threads: [thread],
     activeThreadId: thread.id,
     modelByProvider: {},
+    modelsByProvider: {},
     usage: {},
     customSkills: [],
-    skillIds: [],
+    skillIds: ['openrouter'],
     failoverEnabled: true,
     systemPrompt: '',
   };
@@ -110,6 +113,9 @@ export function loadState(storage: Storage | undefined = safeStorage()): Persist
       threads,
       activeThreadId: typeof parsed.activeThreadId === 'string' ? parsed.activeThreadId : threads[0].id,
       modelByProvider: isRecord(parsed.modelByProvider) ? (parsed.modelByProvider as Record<string, string>) : {},
+      modelsByProvider: isRecord(parsed.modelsByProvider)
+        ? (parsed.modelsByProvider as Record<string, ModelInfo[]>)
+        : {},
       usage: isRecord(parsed.usage) ? (parsed.usage as UsageMap) : {},
       customSkills: Array.isArray(parsed.customSkills) ? (parsed.customSkills as Skill[]) : [],
       skillIds: Array.isArray(parsed.skillIds) ? (parsed.skillIds as string[]) : [],

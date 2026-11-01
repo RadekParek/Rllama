@@ -21,6 +21,24 @@ export class ProviderError extends Error {
   }
 
   /** True for conditions where moving to another provider makes sense. */
+  /** True when the same provider may work over a different wire protocol. */
+  get isProtocolMismatch(): boolean {
+    if (this.status === 404) {
+      return true;
+    }
+    if (this.status !== 400 && this.status !== 422) {
+      return false;
+    }
+    const body = this.body.toLowerCase();
+    return (
+      body.includes('not supported') ||
+      body.includes('unsupported') ||
+      body.includes('responses') ||
+      body.includes('chat/completions') ||
+      body.includes('wire')
+    );
+  }
+
   get isFailoverWorthy(): boolean {
     return (
       this.status === 401 ||
@@ -205,6 +223,84 @@ export async function streamChat(request: StreamRequest): Promise<StreamResult> 
     });
     await readChunks(response, (chunk) => parser.push(chunk));
     parser.flush();
+  } else if (provider.protocol === 'openai-responses') {
+    // OpenAI Responses wire API — the one Codex selects with
+    // `wire_api = "responses"`. AgentRouter exposes some models only here.
+    const input = messages
+      .filter((message) => message.role !== 'system')
+      .map((message) => ({
+        role: message.role,
+        content: [
+          {
+            type: message.role === 'user' ? 'input_text' : 'output_text',
+            text: message.content,
+          },
+        ],
+      }));
+    const payload: Record<string, unknown> = { model, input, stream: true };
+    if (system) {
+      payload.instructions = system;
+    }
+    if (maxTokens) {
+      payload.max_output_tokens = maxTokens;
+    }
+    const response = await post(url, headers, payload, signal);
+    const parser = createSseParser((event) => {
+      const record = safeJson(event.data);
+      if (!record) {
+        return;
+      }
+      const type = typeof record.type === 'string' ? record.type : event.event;
+      switch (type) {
+        case 'response.output_text.delta':
+          if (typeof record.delta === 'string') {
+            emit(record.delta);
+          }
+          break;
+        case 'response.output_text.done':
+          // Some gateways stream no deltas and only report the final text.
+          if (!text && typeof record.text === 'string') {
+            emit(record.text);
+          }
+          break;
+        case 'response.output_item.done': {
+          const item = record.item as Record<string, unknown> | undefined;
+          const content = item?.content;
+          if (!text && Array.isArray(content)) {
+            for (const part of content) {
+              const piece = part as Record<string, unknown>;
+              if (typeof piece.text === 'string') {
+                emit(piece.text);
+              }
+            }
+          }
+          break;
+        }
+        case 'response.completed':
+        case 'response.incomplete': {
+          const result = record.response as Record<string, unknown> | undefined;
+          const found = result?.usage as Record<string, unknown> | undefined;
+          if (found) {
+            usage.promptTokens = Number(found.input_tokens ?? 0) || usage.promptTokens;
+            usage.completionTokens = Number(found.output_tokens ?? 0) || usage.completionTokens;
+          }
+          if (result && typeof result.model === 'string') {
+            handlers.onModel?.(result.model);
+          }
+          break;
+        }
+        case 'response.failed':
+        case 'error': {
+          const result = record.response as Record<string, unknown> | undefined;
+          const error = (record.error ?? result?.error) as Record<string, unknown> | undefined;
+          throw new ProviderError(0, String(error?.message ?? 'responses stream error'));
+        }
+        default:
+          break;
+      }
+    });
+    await readChunks(response, (chunk) => parser.push(chunk));
+    parser.flush();
   } else {
     const payload: Record<string, unknown> = {
       model,
@@ -264,6 +360,27 @@ export async function streamChat(request: StreamRequest): Promise<StreamResult> 
   return { text, usage };
 }
 
+/** Reads optional context lengths from a /models payload. */
+function contextLengths(payload: unknown): Record<string, number> {
+  const found: Record<string, number> = {};
+  const record = payload as Record<string, unknown> | null;
+  const data = record?.data;
+  if (!Array.isArray(data)) {
+    return found;
+  }
+  for (const entry of data) {
+    const item = entry as Record<string, unknown>;
+    if (typeof item.id !== 'string') {
+      continue;
+    }
+    const context = Number(item.context_length ?? item.context_window ?? item.max_context_length ?? 0);
+    if (context > 0) {
+      found[item.id] = context;
+    }
+  }
+  return found;
+}
+
 function safeJson(text: string): Record<string, unknown> | null {
   try {
     const value = JSON.parse(text);
@@ -288,7 +405,8 @@ export async function listModels(provider: Provider, signal?: AbortSignal): Prom
     throw new ProviderError(response.status, text);
   }
   const payload: unknown = await response.json().catch(() => null);
+  const contextById = contextLengths(payload);
   return parseModelList(provider.protocol, payload)
     .sort((a, b) => a.localeCompare(b))
-    .map((id) => ({ id, label: id }));
+    .map((id) => ({ id, label: id, context: contextById[id] }));
 }
