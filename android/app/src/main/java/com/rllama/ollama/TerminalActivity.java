@@ -272,6 +272,7 @@ public class TerminalActivity extends AppCompatActivity {
         worker = new Thread(new Runnable() {
             @Override
             public void run() {
+                ensureServerFor(commandLine);
                 int exitCode = manager.runShell(ShellCommand.rewrite(commandLine, TerminalActivity.this),
                         new OllamaManager.OutputSink() {
                             @Override
@@ -295,6 +296,35 @@ public class TerminalActivity extends AppCompatActivity {
         }, "ollama-terminal");
         worker.setDaemon(true);
         worker.start();
+    }
+
+    /**
+     * Convenience: typing `ollama …` or curling the API should just work, so
+     * bring the server up first when it is not listening yet.
+     */
+    private void ensureServerFor(String commandLine) {
+        String trimmed = commandLine.trim();
+        boolean needsServer = trimmed.startsWith("ollama")
+                || trimmed.startsWith("curl")
+                || trimmed.contains("11434");
+        if (!needsServer || OllamaHttp.isServerUp(prefs.port())) {
+            return;
+        }
+        appendOutput("[app] starting the Ollama server…\n");
+        OllamaService.start(this);
+        for (int i = 0; i < 120 && !cancelled; i++) {
+            if (OllamaHttp.isServerUp(prefs.port())) {
+                appendOutput("[app] server ready\n");
+                return;
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        appendOutput("[app] server did not become ready; continuing anyway\n");
     }
 
     private void cancelRunningCommand() {
