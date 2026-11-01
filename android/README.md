@@ -23,9 +23,20 @@ The binaries are stored as `lib*.so` because Android only extracts and marks
 executable the APK entries named `lib*.so` in the app's native library
 directory. Everything else about them is a normal Ollama executable.
 
-`unzip -v app/build/outputs/apk/debug/app-debug.apk` lists the exact sizes; the
-`android` workflow also prints them in the `Report APK contents` step and in the
-job summary.
+Sizes of the current build (measured by the `android` workflow on the pushed
+commit, `unzip -v` reports the same numbers for any local build):
+
+| Entry | Uncompressed bytes | In the APK |
+| --- | --- | --- |
+| `lib/arm64-v8a/libollama.so` | 40,585,696 | deflated |
+| `lib/arm64-v8a/libllama-server.so` | 16,169,816 | deflated |
+| `classes*.dex` | ~10,100,000 | deflated |
+| **APK total** | **27,420,158** | ~26 MiB on disk |
+
+The APK is deflated, so the installed footprint is roughly the uncompressed
+sum (~67 MB) before any model is pulled. `llama-server` is stripped of DWARF
+debug info in `scripts/build_android.sh`; that alone took it from 204 MB to
+16 MB without touching anything the loader or the model runner needs.
 
 ### Why it is far smaller than the Windows bundle
 

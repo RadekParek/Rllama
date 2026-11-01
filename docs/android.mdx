@@ -65,19 +65,25 @@ OLLAMA_HOST=http://127.0.0.1:11434
 
 ## What is in the APK
 
-| Component | Path inside the APK |
-| --- | --- |
-| Ollama Go server + CLI | `lib/arm64-v8a/libollama.so` |
-| llama.cpp inference server (CPU, static) | `lib/arm64-v8a/libllama-server.so` |
-| Third-party license texts | `assets/licenses/` |
-| App: console, foreground service, process host | `classes*.dex` |
+| Component | Path inside the APK | Uncompressed |
+| --- | --- | --- |
+| Ollama Go server + CLI | `lib/arm64-v8a/libollama.so` | 40,585,696 B |
+| llama.cpp inference server (CPU, static) | `lib/arm64-v8a/libllama-server.so` | 16,169,816 B |
+| App: console, foreground service, process host | `classes*.dex` | ~10,100,000 B |
+| Third-party license texts | `assets/licenses/` | small |
+
+Sizes are from the CI build of the current commit; the **APK itself is
+27,420,158 bytes** (~26 MiB) because the entries are deflated, and it occupies
+about 67 MB once installed, before any model is pulled.
 
 Android only extracts APK entries named `lib*.so` into the executable native
 library directory, which is why the two executables carry that name; they are
 ordinary Ollama binaries otherwise.
 
 The exact byte size of every entry is printed by the `Report APK contents` step
-of the `android` workflow (`unzip -v` also shows it locally).
+of the `android` workflow (`unzip -v` also shows it locally). `llama-server` is
+stripped of DWARF debug info by `scripts/build_android.sh`; that reduced it from
+204 MB to 16 MB, since debug sections are useless on a phone.
 
 ### Why the APK is much smaller than the Windows installer
 
