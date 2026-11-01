@@ -9,6 +9,104 @@ import { trimBase } from './providers';
 import { transportFetch } from './transport';
 import type { Provider } from './types';
 
+/**
+ * Daemon handling.
+ *
+ * Two things used to go wrong here and both are fixed in this module:
+ *
+ *  1. A pull was sent to whichever Ollama provider sat first in the list, so
+ *     with an Ollama Cloud provider present it went to `https://ollama.com/v1`
+ *     and came back as a Cloudflare HTML 403 — a web page where a pull stream
+ *     was expected. Pulls only ever belong on a local daemon.
+ *  2. The daemon address was treated as fixed. It is not: on a phone it is the
+ *     phone itself; on a desktop it may be a machine on the LAN; and the port
+ *     or scheme can be mis-typed. Discovery, plus a LAN scan where the platform
+ *     allows it, replaces "edit the URL until it works".
+ */
+
+/** True when a URL points at the hosted Ollama service rather than a daemon. */
+export function isOllamaCloudUrl(url: string): boolean {
+  const trimmed = url.trim();
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.exec(trimmed);
+  const host = withScheme ? trimmed.slice(withScheme[0].length).split(/[/:?#]/)[0] : trimmed.split(/[/:?#]/)[0];
+  return /(^|\.)ollama\.com$/i.test(host);
+}
+
+/** True for an Ollama protocol provider that is not the cloud service. */
+export function isLocalDaemon(provider: Provider): boolean {
+  if (provider.protocol !== 'ollama') {
+    return false;
+  }
+  return !isOllamaCloudUrl(provider.baseUrl);
+}
+
+/** The first usable local daemon: enabled ones first, then disabled ones. */
+export function localDaemon(providers: Provider[]): Provider | undefined {
+  return (
+    providers.find((provider) => provider.enabled && isLocalDaemon(provider)) ??
+    providers.find(isLocalDaemon)
+  );
+}
+
+/**
+ * Normalises a daemon URL: no trailing slash, and no `/v1` suffix, because the
+ * native API lives at `/api/...` on the bare host.
+ */
+export function daemonBase(url: string): string {
+  let value = url.trim().replace(/\/+$/, '');
+  if (/\/v1$/i.test(value)) {
+    value = value.replace(/\/v1$/i, '');
+  }
+  return value;
+}
+
+/** Models tagged `-cloud` run on ollama.com and are never downloaded. */
+export function isCloudOnlyModel(model: string): boolean {
+  return /-cloud(:|$)/i.test(model) || /:cloud$/i.test(model);
+}
+
+export type PullPlan =
+  | { ok: true; url: string; model: string; daemonName: string; providerId: string }
+  | { ok: false; reason: string; short: string };
+
+/**
+ * Decides where a pull must go, or explains why it cannot go anywhere.
+ *
+ * `requested` is either a provider id (from the catalogue) or empty; a cloud
+ * provider is never chosen, and a `-cloud` model is refused before a request is
+ * made, so the user gets a sentence instead of an HTML 403 page.
+ */
+export function planPull(providers: Provider[], requested: string | undefined, model: string): PullPlan {
+  if (isCloudOnlyModel(model)) {
+    return {
+      ok: false,
+      short: `${model} is a cloud model.`,
+      reason:
+        `${model} is tagged cloud: it runs on ollama.com and is never downloaded. ` +
+        'Add an Ollama Cloud provider to chat with it, or pick a local model.',
+    };
+  }
+
+  const requestedProvider = providers.find((provider) => provider.id === requested);
+  const daemon =
+    (requestedProvider && isLocalDaemon(requestedProvider) ? requestedProvider : undefined) ??
+    localDaemon(providers);
+
+  if (!daemon) {
+    const cloud = providers.find((provider) => provider.protocol === 'ollama');
+    return {
+      ok: false,
+      short: 'No local Ollama daemon configured.',
+      reason: cloud
+        ? `Pulls cannot go to ${daemonBase(cloud.baseUrl)} — that is Ollama Cloud, and it answers a pull with an HTML 403 page. ` +
+          'Add a local Ollama provider (Local backend → Start daemon) and Rllama will download into it.'
+        : 'Add a local Ollama provider first (Local backend → Start daemon), then pull again.',
+    };
+  }
+
+  return { ok: true, url: daemonBase(daemon.baseUrl), model, daemonName: daemon.name, providerId: daemon.id };
+}
+
 export interface PullProgress {
   /** The daemon's own wording: "pulling manifest", "verifying sha256 digest", "success" ... */
   status: string;
@@ -107,43 +205,55 @@ function parseProgress(line: string): PullProgress | null {
   }
 }
 
-/** Downloads a model into the daemon behind `provider`. */
+/**
+ * Downloads a model into a *local daemon*.
+ *
+ * Taking a URL rather than a provider is deliberate: it makes it impossible to
+ * aim a pull at Ollama Cloud by accident.
+ */
 export async function pullModel(
-  provider: Provider,
+  daemonUrl: string,
   model: string,
   onProgress: (progress: PullProgress) => void,
   signal?: AbortSignal,
 ): Promise<PullProgress> {
+  const url = `${daemonBase(daemonUrl)}/api/pull`;
+  if (isOllamaCloudUrl(url)) {
+    throw new Error(
+      'Refusing to pull from ollama.com: cloud models are never downloaded. Add an Ollama Cloud provider to chat instead.',
+    );
+  }
   let response: Response;
   try {
     response = await transportFetch(
-      endpoint(provider, '/api/pull'),
+      url,
       {
         method: 'POST',
-        headers: headers(provider),
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, name: model, stream: true }),
       },
       signal,
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(
-      `Cannot reach the Ollama daemon at ${provider.baseUrl}: ${message}. Is \`ollama serve\` running?`,
-    );
+    throw new Error(`No Ollama daemon answered at ${daemonBase(daemonUrl)}: ${message}.`);
   }
   if (!response.ok) {
     const text = await response.text().catch(() => '');
     const looksHtml = /^\s*(<!doctype html|<html)/i.test(text.slice(0, 200));
     if (looksHtml) {
-      const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(text)?.[1]?.trim() ?? 'no title';
       throw new Error(
-        `Pulling “${model}” was blocked (HTTP ${response.status} — ${title}). ` +
-          'The daemon returned a web page instead of a pull stream, which happens when the model is cloud-only ' +
-          '(it runs on ollama.com and is never downloaded) or when a proxy sits in front of the daemon. ' +
-          'Cloud models belong on an Ollama Cloud provider; local pulls should hit the daemon directly at /api/pull.',
+        `Pulling ${model} was refused by ${daemonBase(daemonUrl)} (HTTP ${response.status}, web page instead of a pull stream). ` +
+          'Either the model is cloud-only, or a proxy/firewall sits in front of the daemon. ' +
+          'Rllama now pulls only from the local daemon; add an Ollama Cloud provider for cloud models.',
       );
     }
-    throw new Error(`ollama pull failed (HTTP ${response.status}): ${text.slice(0, 300)}`);
+    if (response.status === 404) {
+      throw new Error(
+        `${model} is not in the daemon's registry (HTTP 404). Check the spelling, or pull a model the library has.`,
+      );
+    }
+    throw new Error(`Pull failed (HTTP ${response.status}): ${text.slice(0, 200)}`);
   }
   if (!response.body) {
     const text = await response.text();

@@ -1,6 +1,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listModels, ProviderError, streamChat } from './core/client';
-import { discoverDaemon, probeDaemon, pullModel, type DaemonProbe, type PullProgress } from './core/ollama';
+import {
+  daemonBase,
+  discoverDaemon,
+  localDaemon,
+  planPull,
+  probeDaemon,
+  pullModel,
+  type DaemonProbe,
+  type PullProgress,
+} from './core/ollama';
 import { AGENT_PREAMBLE, ULTRACODE_PREAMBLE, effortMaxTokens, modelShortName, trimHistory } from './core/settings';
 import { allSkills, buildSystemPrompt, PINNED_SKILLS } from './core/skills';
 import { loadState, newThread, pruneUsage, saveState, uid, type PersistedState } from './core/store';
@@ -24,8 +33,12 @@ import { SkillsPanel } from './ui/panels/Skills';
 import { CatalogPanel, type PullState } from './ui/panels/Catalog';
 import { UsagePanel } from './ui/panels/Usage';
 import { SettingsPanel } from './ui/panels/Settings';
-import { CliPanel, McpPanel } from './ui/panels/Workspace';
+import { McpPanel } from './ui/panels/Workspace';
 import { LocalPanel } from './ui/panels/Local';
+import { TerminalPanel } from './ui/panels/Terminal';
+import { ModelsPanel } from './ui/panels/Models';
+import { runCommand } from './core/terminal';
+import { scanLan } from './core/native';
 
 export default function App(): React.ReactElement {
   const [state, setState] = useState<PersistedState>(() => loadState());
@@ -162,11 +175,31 @@ export default function App(): React.ReactElement {
       }
       const probes = await discoverDaemon(provider.baseUrl);
       setDaemonProbes(probes);
-      const reachable = probes.find((probe) => probe.ok);
-      if (reachable && reachable.url !== provider.baseUrl) {
-        applyDaemonUrl(provider.id, reachable.url);
-        setNotice(`Reconnected to Ollama at ${reachable.url}.`);
-        return { provider: { ...provider, baseUrl: reachable.url }, moved: true };
+      const found = probes.find((probe) => probe.ok);
+      if (found && found.url !== provider.baseUrl) {
+        applyDaemonUrl(provider.id, found.url);
+        setNotice(`Reconnected to Ollama at ${found.url}.`);
+        return { provider: { ...provider, baseUrl: found.url }, moved: true };
+      }
+
+      // Nothing on this device. Once per session it is worth a real subnet
+      // scan — that is how Ollama running on a PC gets found without typing an
+      // address.
+      if (!lanTried.current) {
+        lanTried.current = true;
+        const lan = await scanLan(11434);
+        if (lan.hosts.length > 0) {
+          const lanProbes = await Promise.all(lan.hosts.map((host) => probeDaemon(`http://${host}:11434`, 1500)));
+          const lanFound = lanProbes
+            .sort((a, b) => Number(b.ok) - Number(a.ok))
+            .find((probe) => probe.ok);
+          setDaemonProbes(lanProbes.sort((a, b) => Number(b.ok) - Number(a.ok)));
+          if (lanFound) {
+            applyDaemonUrl(provider.id, lanFound.url);
+            setNotice(`Found a daemon on your network at ${lanFound.url}.`);
+            return { provider: { ...provider, baseUrl: lanFound.url }, moved: true };
+          }
+        }
       }
       return { provider, moved: false };
     },
@@ -176,6 +209,7 @@ export default function App(): React.ReactElement {
   // On first paint, quietly check the local daemon so a stale address fixes
   // itself before the user ever sends a message.
   const bootstrapped = useRef(false);
+  const lanTried = useRef(false);
   useEffect(() => {
     if (bootstrapped.current || !localProvider) {
       return;
@@ -327,13 +361,24 @@ export default function App(): React.ReactElement {
 
   const startPull = useCallback(
     (providerId: string, model: string) => {
-      const provider = state.providers.find((item) => item.id === providerId);
-      if (!provider) {
+      const report = (update: PullState) =>
+        setPullState((previous) => ({ ...previous, [model]: update }));
+
+      // Decide *before* any request where the download may go. This is the fix
+      // for the HTML 403: a pull aimed at Ollama Cloud can never succeed.
+      const plan = planPull(state.providers, providerId, model);
+      if (!plan.ok) {
+        report({ status: 'failed', error: plan.short });
+        setNotice(plan.reason);
+        setPanel('local');
         return;
       }
 
-      const report = (update: PullState) =>
-        setPullState((previous) => ({ ...previous, [model]: update }));
+      const provider = state.providers.find((item) => item.id === plan.providerId);
+      if (!provider) {
+        report({ status: 'failed', error: 'No local daemon configured.' });
+        return;
+      }
 
       const track = (progress: PullProgress) =>
         report({
@@ -350,31 +395,29 @@ export default function App(): React.ReactElement {
         const { provider: active } = await ensureDaemon(provider);
         let target = active;
         try {
-          const final = await pullModel(target, model, track);
+          const final = await pullModel(daemonBase(target.baseUrl), model, track);
           report({ status: final.status, percent: final.status === 'success' ? 100 : final.percent });
           if (final.status === 'success') {
             setNotice(`Pulled ${modelShortName(model)}.`);
-            fetchModelsRef.current(providerId);
+            fetchModelsRef.current(provider.id);
           }
           return;
         } catch (error) {
-          if (target.protocol === 'ollama') {
-            const probes = await discoverDaemon(target.baseUrl);
-            setDaemonProbes(probes);
-            const reachable = probes.find((probe) => probe.ok);
-            if (reachable && reachable.url !== target.baseUrl) {
-              applyDaemonUrl(target.id, reachable.url);
-              try {
-                const final = await pullModel({ ...target, baseUrl: reachable.url }, model, track);
-                report({ status: final.status, percent: final.status === 'success' ? 100 : final.percent });
-                if (final.status === 'success') {
-                  setNotice(`Pulled ${modelShortName(model)}.`);
-                  fetchModelsRef.current(providerId);
-                }
-                return;
-              } catch {
-                // Report the original failure below.
+          const probes = await discoverDaemon(target.baseUrl);
+          setDaemonProbes(probes);
+          const reachable = probes.find((probe) => probe.ok);
+          if (reachable && reachable.url !== target.baseUrl) {
+            applyDaemonUrl(target.id, reachable.url);
+            try {
+              const final = await pullModel(daemonBase(reachable.url), model, track);
+              report({ status: final.status, percent: final.status === 'success' ? 100 : final.percent });
+              if (final.status === 'success') {
+                setNotice(`Pulled ${modelShortName(model)} on the daemon at ${reachable.url}.`);
+                fetchModelsRef.current(provider.id);
               }
+              return;
+            } catch {
+              // Report the original failure below.
             }
           }
           const message = error instanceof Error ? error.message : String(error);
@@ -383,6 +426,47 @@ export default function App(): React.ReactElement {
       })();
     },
     [state.providers, ensureDaemon, applyDaemonUrl],
+  );
+
+  /**
+   * Runs one shell command from the chat, with the result as a message.
+   *
+   * This is the "ask in Termux too, but show it in Rllama" path: the command
+   * goes to the real shell (Termux on Android, the desktop shell otherwise) and
+   * the output lands in the thread like any other answer.
+   */
+  const runShell = useCallback(
+    async (command: string) => {
+      const target = thread;
+      if (!target) {
+        return;
+      }
+      const commandId = uid('msg');
+      const replyId = uid('msg');
+      const createdAt = Date.now();
+      patchThread(target.id, (value) => ({
+        ...value,
+        messages: [
+          ...value.messages,
+          { id: commandId, role: 'user', content: `$ ${command}`, createdAt },
+          { id: replyId, role: 'assistant', content: 'Running…', createdAt: createdAt + 1, model: 'shell' },
+        ],
+      }));
+
+      const result = await runCommand(command);
+      const body =
+        [result.output.trim(), result.message].filter(Boolean).join('\n\n') || '(no output)';
+      patchThread(target.id, (value) => ({
+        ...value,
+        messages: value.messages.map((message) =>
+          message.id === replyId ? { ...message, content: '```\n' + body + '\n```' } : message,
+        ),
+      }));
+      if (command.includes('ollama')) {
+        void discoverLocal();
+      }
+    },
+    [thread, patchThread, discoverLocal],
   );
 
   /* ----------------------------------------------------------------- chat */
@@ -397,6 +481,12 @@ export default function App(): React.ReactElement {
     async (textOverride?: string) => {
       const text = (textOverride ?? draft).trim();
       if (!text || busy || !thread) {
+        return;
+      }
+
+      if (/^\/run\s+/.test(text)) {
+        setDraft('');
+        await runShell(text.replace(/^\/run\s+/, ''));
         return;
       }
 
@@ -677,6 +767,8 @@ export default function App(): React.ReactElement {
       { id: 'new', label: 'New chat', hint: '⌘K', run: createThread },
       { id: 'providers', label: 'API providers', run: () => setPanel('providers') },
       { id: 'models', label: 'My models', run: () => setPanel('catalog') },
+      { id: 'local-models', label: 'Local models', hint: 'GGUF · Hugging Face', run: () => setPanel('models') },
+      { id: 'terminal', label: 'Terminal', hint: 'Termux · /run <cmd>', run: () => setPanel('cli') },
       { id: 'skills', label: 'Skills', run: () => setPanel('skills') },
       { id: 'settings', label: 'Settings', run: () => setPanel('settings') },
       { id: 'usage', label: 'Usage', run: () => setPanel('usage') },
@@ -694,6 +786,7 @@ export default function App(): React.ReactElement {
     return map;
   }, [state.modelsByProvider]);
 
+  const localDaemonId = localDaemon(state.providers)?.id ?? '';
   const modelLabelForComposer = activeModel ? modelShortName(activeModel) : '';
 
   return (
@@ -941,6 +1034,7 @@ export default function App(): React.ReactElement {
             testStatus={testStatus}
             probes={daemonProbes}
             onDiscover={discoverLocal}
+            onProbes={setDaemonProbes}
             onUpdate={(providerId, patch) =>
               setState((previous) => ({
                 ...previous,
@@ -955,8 +1049,29 @@ export default function App(): React.ReactElement {
       ) : null}
 
       {panel === 'cli' ? (
-        <Drawer title="Terminal CLI" subtitle="Claude Code, Codex, Hermes" onClose={() => setPanel(null)}>
-          <CliPanel />
+        <Drawer
+          title="Terminal"
+          subtitle="Termux on Android · your shell on desktop"
+          wide
+          onClose={() => setPanel(null)}
+        >
+          <TerminalPanel
+            onAfterCommand={(command) => {
+              if (command.includes('ollama')) {
+                void discoverLocal();
+              }
+            }}
+          />
+        </Drawer>
+      ) : null}
+
+      {panel === 'models' ? (
+        <Drawer title="Local models" subtitle="Hugging Face · files on this device" wide onClose={() => setPanel(null)}>
+          <ModelsPanel
+            pullState={pullState}
+            onPullRef={(ref) => startPull(localDaemonId, ref)}
+            onOpenLocal={() => setPanel('local')}
+          />
         </Drawer>
       ) : null}
     </div>

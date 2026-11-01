@@ -39,4 +39,17 @@
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Termux RUN_COMMAND: lets Rllama ask Termux to run `ollama serve`, pulls
+         and imports, so the daemon and the app run side by side. -->
+    <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+    <!-- Reading GGUFs (PocketPal models, Hugging Face downloads) from shared
+         storage; Android 13+ handles Downloads through the file picker instead. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+
+    <!-- Android 11+ hides other packages unless they are declared. -->
+    <queries>
+        <package android:name="com.termux" />
+    </queries>
 </manifest>
