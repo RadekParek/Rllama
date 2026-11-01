@@ -73,7 +73,8 @@ OLLAMA_HOST=http://127.0.0.1:11434
 | Third-party license texts | `assets/licenses/` | small |
 
 Sizes are from the CI build of the current commit; the **APK itself is
-27,420,158 bytes** (~26 MiB) because the entries are deflated, and it occupies
+27,420,158 bytes** (~26 MiB; a few bytes move between builds because the
+version string is embedded) because the entries are deflated, and it occupies
 about 67 MB once installed, before any model is pulled.
 
 Android only extracts APK entries named `lib*.so` into the executable native

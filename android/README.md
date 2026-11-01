@@ -31,7 +31,7 @@ commit, `unzip -v` reports the same numbers for any local build):
 | `lib/arm64-v8a/libollama.so` | 40,585,696 | deflated |
 | `lib/arm64-v8a/libllama-server.so` | 16,169,816 | deflated |
 | `classes*.dex` | ~10,100,000 | deflated |
-| **APK total** | **27,420,158** | ~26 MiB on disk |
+| **APK total** | **27,420,158** | ~26 MiB on disk (a few bytes differ between builds: the version string is embedded) |
 
 The APK is deflated, so the installed footprint is roughly the uncompressed
 sum (~67 MB) before any model is pulled. `llama-server` is stripped of DWARF
