@@ -165,8 +165,31 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up the Android SDK (platform 35 + build tools)
-        uses: android-actions/setup-android@v3
+      - name: Ensure the Android SDK has platform 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$sdk" ]; then
+            echo "::error::no Android SDK at $sdk"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$sdk" >>"$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$sdk" >>"$GITHUB_ENV"
+          echo "Using Android SDK at $sdk"
+          ls "$sdk/platforms" 2>/dev/null || true
+
+          # Runner images ship an SDK; install anything missing on a best effort
+          # basis so a registry hiccup does not fail the build (AGP can also
+          # download what it needs once the licenses are accepted).
+          sdkmanager="$sdk/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            echo "::warning::sdkmanager not found; using the preinstalled SDK as is"
+            exit 0
+          fi
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0" >/dev/null 2>&1 \
+            || echo "::warning::could not install missing SDK packages; continuing with what is available"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
