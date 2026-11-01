@@ -3,8 +3,8 @@ import type { ChatMessage, Effort, Settings } from './types';
 /** Defaults chosen to be safe on a phone: short replies, roomy history. */
 export const DEFAULT_SETTINGS: Settings = {
   effort: 'medium',
-  maxTokens: 2048,
-  contextTokens: 32000,
+  maxTokens: 4096,
+  contextTokens: 1_000_000,
   temperature: 0.7,
   agentMode: true,
   showLogos: true,
@@ -16,7 +16,7 @@ export const EFFORT_LABELS: Record<Effort, string> = {
   high: 'High',
 };
 
-export const CONTEXT_PRESETS = [8000, 16000, 32000, 65536, 131072];
+export const CONTEXT_PRESETS = [128_000, 256_000, 512_000, 1_000_000, 2_000_000];
 
 /** Tokens ≈ characters / 4, the same estimate the usage ledger uses. */
 export function estimateTokens(text: string): number {

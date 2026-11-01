@@ -2,7 +2,7 @@ import React from 'react';
 import type { Thread } from '../../core/types';
 import { IconPlus, IconTrash } from '../Icons';
 
-export type MenuTarget = 'settings' | 'skills' | 'mcp' | 'providers' | 'catalog' | 'cli';
+export type MenuTarget = 'settings' | 'skills' | 'mcp' | 'providers' | 'catalog' | 'cli' | 'local';
 
 export interface MenuPanelProps {
   threads: Thread[];
@@ -27,11 +27,20 @@ export function MenuPanel(props: MenuPanelProps): React.ReactElement {
     { id: 'providers', label: 'API providers', hint: 'keys' },
     { id: 'catalog', label: 'My models', hint: 'catalog' },
     { id: 'cli', label: 'Terminal CLI', hint: 'agents' },
+    { id: 'local', label: 'Local backend', hint: 'Ollama · Termux' },
     { id: 'settings', label: 'Settings', hint: 'effort, context' },
   ];
 
   return (
     <>
+      <div className="menu-brand">
+        <img src="./icons/icon-192.png" alt="" width={34} height={34} />
+        <div>
+          <div className="brand-name">Rllama</div>
+          <div className="brand-sub">{props.threads.length} chats · local-first</div>
+        </div>
+      </div>
+
       <button className="menu-primary" onClick={props.onNewChat}>
         <IconPlus width={15} height={15} />
         New chat

@@ -5,6 +5,47 @@ Plain-language record of every change, newest first. "Added" = new capability,
 
 ---
 
+## 2026-11-01 — session 5: owner's icon, real brand logos, slimmer UI
+
+### Added
+
+- **Real vendor logos** for Claude, OpenAI, DeepSeek, Kimi, Gemini, Gemma, Qwen,
+  Llama, Mistral, Groq, GLM/Zhipu, Microsoft, NVIDIA, MiniMax, Grok and Ollama.
+  They are the official marks, inlined from `@lobehub/icons-static-svg` (MIT) by
+  `scripts/make-logos.mjs` into `src/ui/logos.generated.ts`; unknown vendors fall
+  back to a neutral letter chip rather than a wrong logo.
+- **Local backend drawer**: daemon address with Save/Test, a one-tap
+  “Same phone (Termux)” preset, copyable Termux commands
+  (`pkg install ollama`, `ollama serve`, `ollama pull treyleo16/claude-oss`) and
+  the `OLLAMA_HOST=0.0.0.0:11434` recipe for running Ollama on a computer.
+- “Fix connection” button on any daemon/network error, which opens that drawer.
+- `npm run icons` and `npm run logos` regenerate the icon set and the logo map.
+
+### Changed
+
+- **The icon is the owner's own artwork** (`assets/icon-source.png`): front-facing
+  line-art llama with the eyepatch. Every size is generated from it — launcher,
+  round, adaptive foreground, splash, favicon, PWA, Apple touch, desktop — and
+  the in-app brand mark now uses the same art.
+- **Icons moved out of `build/`**: the repository ignores `build` entries, which
+  is why earlier icon files never survived a commit. They now live in `assets/`.
+- **Sparser composer**: the row is now model (with logo), effort, mode
+  (Agent/Chat) and send. Skill chips moved into the Skills drawer and `/`
+  commands; only a “3 skills” hint remains.
+- **Context window defaults to 1M tokens**, presets run to 2M; reply cap
+  defaults to 4096.
+- Top bar no longer shows a token counter; it lives in Usage.
+
+### Fixed
+
+- Cloud-only models are no longer “pulled”: the catalogue hides Pull for them and
+  offers “Add to cloud” instead.
+- Pull failures that come back as an HTML page (HTTP 403 WAF page) are explained
+  as cloud-only or proxy-blocked instead of dumping raw markup.
+- Line art stays legible at launcher sizes (alpha lift when downscaling).
+
+---
+
 ## 2026-11-01 — session 4: phone layout, menu, logos, effort, parallel models
 
 ### Added

@@ -96,10 +96,10 @@ Everything else — providers, skills, usage ledger, failover — is identical.
 
 ## Icons
 
-All icons are PNG. `scripts/make-icons.py` (Pillow) derives every size from
-`build/icon-source.png`:
+All icons are PNG, generated from the owner's own artwork in
+`assets/icon-source.png` by `scripts/make-icons.py` (Pillow):
 
-- `build/icon.png`, `build/icon-512.png` — desktop packaging
+- `assets/icon.png`, `assets/icon-512.png` — desktop packaging
 - `public/icons/*.png` — favicon, PWA, iOS home screen
 - `android/app/src/main/res/mipmap-*/ic_launcher*.png` — launcher, round icon and
   adaptive-icon foreground (108dp canvas, mark inside the safe zone)
@@ -107,8 +107,12 @@ All icons are PNG. `scripts/make-icons.py` (Pillow) derives every size from
 
 ```shell
 python3 -m pip install pillow
-python3 scripts/make-icons.py
+npm run icons     # every PNG size from assets/icon-source.png
+npm run logos     # inline vendor marks into src/ui/logos.generated.ts
 ```
+
+Vendor marks come from `@lobehub/icons-static-svg` (MIT) — official brand SVGs,
+not redrawn approximations.
 
 ## Layout
 

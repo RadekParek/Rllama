@@ -15,7 +15,9 @@
     "desktop:pack": "npm run build && electron-builder --dir",
     "desktop:dist": "npm run build && electron-builder",
     "android:sync": "npm run build && cap sync android",
-    "android:build": "npm run build && cap sync android && cd android && ./gradlew assembleDebug"
+    "android:build": "npm run build && cap sync android && cd android && ./gradlew assembleDebug",
+    "icons": "python3 scripts/make-icons.py",
+    "logos": "node scripts/make-logos.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^7.6.10",
@@ -25,6 +27,7 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^7.6.10",
+    "@lobehub/icons-static-svg": "^1.101.0",
     "@types/node": "^22.10.2",
     "@types/react": "^18.3.17",
     "@types/react-dom": "^18.3.5",
@@ -45,27 +48,27 @@
       "package.json"
     ],
     "directories": {
-      "buildResources": "build",
+      "buildResources": "assets",
       "output": "release"
     },
     "linux": {
       "target": [
         "AppImage"
       ],
-      "icon": "build/icon.png",
+      "icon": "assets/icon.png",
       "category": "Development"
     },
     "win": {
       "target": [
         "nsis"
       ],
-      "icon": "build/icon.png"
+      "icon": "assets/icon.png"
     },
     "mac": {
       "target": [
         "dmg"
       ],
-      "icon": "build/icon.png"
+      "icon": "assets/icon.png"
     }
   }
 }

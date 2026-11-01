@@ -29,6 +29,7 @@ import { CatalogPanel, type PullState } from './ui/panels/Catalog';
 import { UsagePanel } from './ui/panels/Usage';
 import { SettingsPanel } from './ui/panels/Settings';
 import { CliPanel, McpPanel } from './ui/panels/Workspace';
+import { LocalPanel } from './ui/panels/Local';
 
 const EFFORT_ORDER: Effort[] = ['low', 'medium', 'high'];
 
@@ -611,6 +612,7 @@ export default function App(): React.ReactElement {
               switchWireApi(message.providerId);
             }
           }}
+          onFixConnection={() => setPanel('local')}
           emptyState={
             <div className="empty">
               <h1>Hey! What are you up to today?</h1>
@@ -650,6 +652,7 @@ export default function App(): React.ReactElement {
           enabledSkillIds={state.skillIds}
           modelLabel={modelLabelForComposer}
           effort={state.settings.effort}
+          agentMode={state.settings.agentMode}
           parallelCount={state.parallel.length}
           notice={notice}
           commands={commands}
@@ -657,6 +660,12 @@ export default function App(): React.ReactElement {
           onSend={() => void send()}
           onStop={stop}
           onToggleSkill={toggleSkill}
+          onToggleAgentMode={() =>
+            setState((previous) => ({
+              ...previous,
+              settings: { ...previous.settings, agentMode: !previous.settings.agentMode },
+            }))
+          }
           onOpenPicker={() => setPickerOpen(true)}
           onCycleEffort={cycleEffort}
           onDismissNotice={() => setNotice(null)}
@@ -794,6 +803,24 @@ export default function App(): React.ReactElement {
           <McpPanel
             servers={state.mcpServers}
             onChange={(mcpServers) => patchState({ mcpServers })}
+          />
+        </Drawer>
+      ) : null}
+
+      {panel === 'local' ? (
+        <Drawer title="Local backend" subtitle="Ollama on this phone or on your computer" onClose={() => setPanel(null)}>
+          <LocalPanel
+            providers={state.providers}
+            testStatus={testStatus}
+            onUpdate={(providerId, patch) =>
+              setState((previous) => ({
+                ...previous,
+                providers: previous.providers.map((provider) =>
+                  provider.id === providerId ? { ...provider, ...patch } : provider,
+                ),
+              }))
+            }
+            onTest={testProvider}
           />
         </Drawer>
       ) : null}
