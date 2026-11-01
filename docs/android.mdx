@@ -2,10 +2,11 @@
 title: Android
 ---
 
-Ollama runs on Android as a regular app: the Go CLI/server and the llama.cpp
-inference server are bundled inside the APK and started as child processes of
-the app. Everything the desktop CLI can do with CPU inference works the same
-way, and the REST API listens on `127.0.0.1:11434` (or `0.0.0.0:11434` when LAN
+Ollama runs on Android as a regular app: the same Go CLI/server and the same
+llama.cpp inference server that the desktop build ships are bundled inside the
+APK and started as child processes of the app. The app opens straight into a
+terminal, so the commands and the HTTP API are the ones you already use on a
+PC. The REST API listens on `127.0.0.1:11434` (or `0.0.0.0:11434` when LAN
 access is enabled) so coding agents can connect to it.
 
 ## Requirements
@@ -16,21 +17,26 @@ access is enabled) so coding agents can connect to it.
 
 ## Install
 
-Download `rllama-ollama-<version>-android-arm64-debug.apk` from the workflow
-artifacts (or from the GitHub release assets when a release was published) and
-install it. The debug APK is signed with an ephemeral key, so allow "install
-unknown apps" for your file manager or use `adb install`.
+CI builds exactly one APK. Download `rllama-ollama-<version>-android-arm64.apk`
+from the `ollama-android-apk` artifact of the `android` workflow (or from the
+release assets when a release was published). It is signed with an ephemeral
+debug key, so allow "install unknown apps" for your file manager or use
+`adb install`.
 
 ```shell
-adb install -r rllama-ollama-<version>-android-arm64-debug.apk
+adb install -r rllama-ollama-<version>-android-arm64.apk
 ```
 
 ## Using the app
 
+The app opens on the terminal. It starts the server automatically and prints the
+payload diagnostics, so the first thing on screen is the CLI you know from the
+desktop build.
+
 | Screen | What it does |
 | --- | --- |
-| Dashboard | Start/stop the server, see endpoints, native payload status and the live log |
-| Terminal | Built-in CLI: run `ollama …` commands, `curl` the API, anything `/system/bin/sh` can do |
+| Terminal (launch screen) | The real CLI: `ollama …`, `curl localhost:11434/…`, anything `/system/bin/sh` can do |
+| Server | Start/stop/restart the daemon, endpoints, native payload status and the live log |
 | Chat | Quick streaming chat against a local model |
 | Models | List, pull, delete models, or import a `.gguf` file from storage |
 | Connect | Copy/paste snippets for Claude Code, the Ollama CLI and OpenAI-compatible clients |
@@ -140,16 +146,12 @@ pushes that touch the app or native inputs, on pull requests, and manually via
 *Run workflow*. It uploads `ollama-android-apk`, and on a `v*` tag it also
 attaches the APK to the existing GitHub release when one is present.
 
-### Turning the debug APK into a signed release
+### Signing
 
-Provide these repository secrets and the release variant is signed:
-
-- `ANDROID_KEYSTORE_BASE64` — base64 of a `.jks`/`.keystore` file
-- `ANDROID_KEYSTORE_PASSWORD`
-- `ANDROID_KEY_ALIAS`
-- `ANDROID_KEY_PASSWORD`
-
-Without them, `assembleDebug` still produces an installable APK.
+CI builds a single `assembleDebug` APK signed with the standard Android debug
+key, which is installable on any device with "install unknown apps" enabled. No
+keystore secrets are required; keep your own signing setup if you publish the
+APK through a store.
 
 ## Troubleshooting
 

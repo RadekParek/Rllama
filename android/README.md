@@ -1,10 +1,12 @@
 # Ollama for Android
 
 This directory contains the Android front end for the Ollama fork in this
-repository. The app bundles the Go Ollama CLI/server and the llama.cpp
-inference server, runs them as child processes, and provides a dashboard, a
-built-in terminal, chat, model management and connection snippets for coding
-agents such as Claude Code.
+repository. The app bundles the exact Go Ollama CLI/server and llama.cpp
+inference server that the desktop build uses, runs them as child processes, and
+opens directly into a terminal, so `ollama list`, `ollama pull`, `ollama run`,
+`ollama serve` and the full HTTP API behave the same as on a PC. Chat, model
+management and connection snippets for coding agents such as Claude Code are
+available as optional screens next to the CLI.
 
 For the user-facing documentation see [`docs/android.mdx`](../docs/android.mdx).
 
@@ -19,6 +21,10 @@ cd android
 gradle assembleDebug                # or: ./gradlew assembleDebug
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
+
+CI publishes a single APK (`.github/workflows/android.yaml`, artifact
+`ollama-android-apk`, file `rllama-ollama-<version>-android-arm64.apk`). There
+is no separate debug/release pair and no signing secrets to configure.
 
 `scripts/build_android.sh` stages the native payload into
 `app/src/main/jniLibs/<abi>/`, which is git-ignored — the binaries are build
@@ -51,7 +57,7 @@ android/
 | `OllamaManager` | Owns the `ollama serve` process, readiness probing, log ring buffer, command execution |
 | `NativePayload` | Locates the bundled binaries and builds the child-process environment |
 | `OllamaService` | Foreground service + wake locks so the server survives backgrounding |
-| `TerminalActivity` | Built-in CLI (`/system/bin/sh` with Ollama's environment) |
+| `TerminalActivity` | Launcher screen: real CLI (`/system/bin/sh` with Ollama's environment), server auto-start, payload diagnostics |
 | `ChatActivity` | Streaming chat client against `/api/chat` |
 | `ModelsActivity` | List/pull/delete models, import a `.gguf` from storage via SAF |
 | `ConnectActivity` | Copy/paste snippets for Claude Code, Ollama CLI, OpenAI-compatible clients |

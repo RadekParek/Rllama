@@ -7,7 +7,6 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.text.method.LinkMovementMethod;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
@@ -24,18 +23,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * The built-in terminal. Commands run through {@code /system/bin/sh} with the
- * bundled Ollama binaries and environment injected, so anything that works in
- * a normal shell on the phone works here as well — including
- * {@code ollama run}, {@code ollama pull}, {@code curl localhost:11434/...}.
+ * The app's main screen: the Ollama CLI, exactly as it behaves on a PC.
+ *
+ * Commands run through {@code /system/bin/sh} with the bundled Ollama binaries
+ * on PATH and the same environment the desktop build uses, so
+ * {@code ollama list}, {@code ollama pull …}, {@code ollama run …},
+ * {@code ollama serve}, {@code curl localhost:11434/api/tags} all work here the
+ * same way they do in a desktop terminal. The server is started automatically
+ * when the app opens, like the desktop daemon.
  */
-public class TerminalActivity extends AppCompatActivity {
+public class TerminalActivity extends AppCompatActivity implements OllamaManager.Listener {
     private static final int MAX_TEXT_CHARS = 400_000;
     private static final int TRIM_TO_CHARS = 200_000;
 
     private Prefs prefs;
     private OllamaManager manager;
 
+    private TextView statusView;
     private TextView outputView;
     private ScrollView scrollView;
     private EditText inputView;
@@ -64,18 +68,18 @@ public class TerminalActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_terminal);
-        setTitle("Terminal");
+        setTitle(R.string.app_name);
 
         prefs = new Prefs(this);
         manager = OllamaManager.get(this);
 
+        statusView = findViewById(R.id.terminalStatus);
         outputView = findViewById(R.id.terminalOutput);
         scrollView = findViewById(R.id.terminalScroll);
         inputView = findViewById(R.id.terminalInput);
         runButton = findViewById(R.id.terminalRun);
         stopButton = findViewById(R.id.terminalStop);
 
-        outputView.setMovementMethod(LinkMovementMethod.getInstance());
         outputView.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
@@ -83,8 +87,6 @@ public class TerminalActivity extends AppCompatActivity {
                 return true;
             }
         });
-
-        findViewById(R.id.terminalInfo).setVisibility(View.GONE);
 
         runButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -110,6 +112,12 @@ public class TerminalActivity extends AppCompatActivity {
         findViewById(R.id.chipList).setOnClickListener(chip("ollama list"));
         findViewById(R.id.chipPs).setOnClickListener(chip("ollama ps"));
         findViewById(R.id.chipHelp).setOnClickListener(chip("help"));
+
+        findViewById(R.id.navChat).setOnClickListener(navigate(ChatActivity.class));
+        findViewById(R.id.navModels).setOnClickListener(navigate(ModelsActivity.class));
+        findViewById(R.id.navConnect).setOnClickListener(navigate(ConnectActivity.class));
+        findViewById(R.id.navServer).setOnClickListener(navigate(MainActivity.class));
+        findViewById(R.id.navSettings).setOnClickListener(navigate(SettingsActivity.class));
 
         inputView.setOnEditorActionListener(new TextView.OnEditorActionListener() {
             @Override
@@ -145,6 +153,31 @@ public class TerminalActivity extends AppCompatActivity {
         });
 
         printBanner();
+        updateStatus();
+        autoStartServer();
+        reportPayloadAsync();
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        manager.addListener(this);
+        updateStatus();
+    }
+
+    @Override
+    protected void onStop() {
+        manager.removeListener(this);
+        super.onStop();
+    }
+
+    private View.OnClickListener navigate(final Class<?> target) {
+        return new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                startActivity(new Intent(TerminalActivity.this, target));
+            }
+        };
     }
 
     private View.OnClickListener chip(final String command) {
@@ -158,16 +191,98 @@ public class TerminalActivity extends AppCompatActivity {
         };
     }
 
+    // ------------------------------------------------------------------
+    // Server lifecycle (mirrors the desktop daemon: start with the app)
+    // ------------------------------------------------------------------
+
+    private void autoStartServer() {
+        if (OllamaHttp.isServerUp(prefs.port())) {
+            appendOutput("[app] reusing the Ollama server on " + NativePayload.loopbackAddress(prefs) + "\n");
+            return;
+        }
+        if (!NativePayload.hasOllama(this)) {
+            appendOutput("[app] native payload missing — build it with scripts/build_android.sh\n");
+            return;
+        }
+        appendOutput("[app] starting the ollama server…\n");
+        try {
+            OllamaService.start(this);
+        } catch (RuntimeException e) {
+            appendOutput("[app] could not start the service: " + e.getMessage() + "\n");
+        }
+    }
+
+    private void reportPayloadAsync() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                final String result = NativePayload.verify(TerminalActivity.this, prefs);
+                final String describe = NativePayload.describe(TerminalActivity.this);
+                appendOutput("[app] payload: " + result + "\n");
+                appendOutput("[app] " + describe.replace("\n", "\n[app] ") + "\n\n");
+            }
+        }, "payload-report").start();
+    }
+
+    /** Typing an `ollama …`/`curl …` command starts the server if it is down. */
+    private void ensureServerFor(String commandLine) {
+        String trimmed = commandLine.trim();
+        boolean needsServer = trimmed.startsWith("ollama")
+                || trimmed.startsWith("curl")
+                || trimmed.contains("11434");
+        if (!needsServer || OllamaHttp.isServerUp(prefs.port())) {
+            return;
+        }
+        appendOutput("[app] starting the Ollama server…\n");
+        OllamaService.start(this);
+        for (int i = 0; i < 120 && !cancelled; i++) {
+            if (OllamaHttp.isServerUp(prefs.port())) {
+                appendOutput("[app] server ready\n");
+                return;
+            }
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+        }
+        appendOutput("[app] server did not become ready; continuing anyway\n");
+    }
+
+    @Override
+    public void onStateChanged(OllamaManager.State state, String detail) {
+        updateStatus();
+        if (state == OllamaManager.State.FAILED) {
+            appendOutput("\n[app] the server stopped: " + detail + "\n");
+            for (String line : manager.logs()) {
+                appendOutput("[server] " + line + "\n");
+            }
+        } else if (state == OllamaManager.State.RUNNING) {
+            appendOutput("[app] server ready: http://" + NativePayload.loopbackAddress(prefs) + "\n");
+        }
+    }
+
+    @Override
+    public void onLogLine(String line) {
+        // The full server log lives on the Server screen; keep the transcript clean.
+    }
+
+    private void updateStatus() {
+        String state = manager.state().name().toLowerCase(java.util.Locale.US);
+        statusView.setText(state + "  ·  http://" + NativePayload.loopbackAddress(prefs)
+                + (prefs.lanEnabled() ? "  ·  lan " + NetworkUtils.lanAddress(this) : "  ·  local only"));
+    }
+
+    // ------------------------------------------------------------------
+    // Built-in commands
+    // ------------------------------------------------------------------
+
     private void printBanner() {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Rllama Ollama terminal\n");
-        sb.append("------------------------\n");
-        sb.append("server: ").append(manager.state()).append(" — ")
-                .append("http://").append(NativePayload.loopbackAddress(prefs)).append('\n');
-        sb.append("models: ").append(prefs.modelDir().getAbsolutePath()).append('\n');
-        sb.append("type `help` for built-ins. `ollama` is already on PATH.\n");
-        sb.append("type `connect` for copy-ready Claude Code / agent settings.\n\n");
-        appendOutput(sb.toString());
+        appendOutput("ollama " + android.os.Build.SUPPORTED_ABIS[0] + " · android "
+                + android.os.Build.VERSION.RELEASE + "\n");
+        appendOutput("models: " + prefs.modelDir().getAbsolutePath() + "\n");
+        appendOutput("`ollama …` works like on a PC, `help` lists app commands.\n\n");
     }
 
     private void submit() {
@@ -202,7 +317,7 @@ public class TerminalActivity extends AppCompatActivity {
             appendOutput(environmentDump());
             return true;
         }
-        if (normalized.equals("server status")) {
+        if (normalized.equals("server status") || normalized.equals("status")) {
             appendOutput(manager.state() + " — " + manager.detail() + "\n");
             return true;
         }
@@ -233,19 +348,20 @@ public class TerminalActivity extends AppCompatActivity {
     }
 
     private String builtInHelp() {
-        return "Built-in commands:\n"
+        return "App commands:\n"
                 + "  help                 this message\n"
                 + "  clear                clear the transcript\n"
-                + "  env                  show the environment used for child processes\n"
-                + "  server start|stop|status\n"
-                + "  chat                 open the chat screen\n"
-                + "  models               open the model manager\n"
-                + "  connect              connection snippets for Claude Code and friends\n"
+                + "  env                  environment used for child processes\n"
+                + "  status               server state\n"
+                + "  server start|stop    control the server\n"
+                + "  chat | models        open the other screens\n"
+                + "  connect              Claude Code / agent connection settings\n"
                 + "\n"
-                + "Everything else runs in /system/bin/sh, for example:\n"
+                + "Everything else is the real Ollama CLI, for example:\n"
                 + "  ollama list\n"
                 + "  ollama pull gemma3:1b\n"
                 + "  ollama run gemma3:1b \"explain coroutines\"\n"
+                + "  ollama ps\n"
                 + "  curl -s localhost:" + prefs.port() + "/api/tags\n";
     }
 
@@ -266,6 +382,10 @@ public class TerminalActivity extends AppCompatActivity {
         return sb.toString();
     }
 
+    // ------------------------------------------------------------------
+    // Command execution
+    // ------------------------------------------------------------------
+
     private void runShellCommand(final String commandLine) {
         cancelled = false;
         setRunning(true);
@@ -277,7 +397,7 @@ public class TerminalActivity extends AppCompatActivity {
                         new OllamaManager.OutputSink() {
                             @Override
                             public void onLine(String line) {
-                                appendOutput(line + "\n");
+                                appendOutput(stripCarriageReturns(line) + "\n");
                             }
 
                             @Override
@@ -298,33 +418,16 @@ public class TerminalActivity extends AppCompatActivity {
         worker.start();
     }
 
-    /**
-     * Convenience: typing `ollama …` or curling the API should just work, so
-     * bring the server up first when it is not listening yet.
-     */
-    private void ensureServerFor(String commandLine) {
-        String trimmed = commandLine.trim();
-        boolean needsServer = trimmed.startsWith("ollama")
-                || trimmed.startsWith("curl")
-                || trimmed.contains("11434");
-        if (!needsServer || OllamaHttp.isServerUp(prefs.port())) {
-            return;
+    /** Progress bars rewrite a line with '\r'; keep what a terminal would show. */
+    private static String stripCarriageReturns(String line) {
+        if (line == null) {
+            return "";
         }
-        appendOutput("[app] starting the Ollama server…\n");
-        OllamaService.start(this);
-        for (int i = 0; i < 120 && !cancelled; i++) {
-            if (OllamaHttp.isServerUp(prefs.port())) {
-                appendOutput("[app] server ready\n");
-                return;
-            }
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return;
-            }
+        int index = line.lastIndexOf('\r');
+        if (index >= 0 && index + 1 < line.length()) {
+            return line.substring(index + 1);
         }
-        appendOutput("[app] server did not become ready; continuing anyway\n");
+        return line;
     }
 
     private void cancelRunningCommand() {

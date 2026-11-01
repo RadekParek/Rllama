@@ -31,12 +31,118 @@ public final class NativePayload {
         return new File(info.nativeLibraryDir);
     }
 
+    private static volatile File resolvedPayloadDir;
+
+    /**
+     * Directory that actually holds runnable copies of the binaries.
+     *
+     * Normally that is the app's native library directory. A few devices refuse
+     * to execute anything there (or extract the files without the exec bit and
+     * block the chmod), so as a last resort the payload is copied into the app's
+     * private files directory, which older Android releases allow to execute.
+     */
+    public static File payloadDir(Context context) {
+        File cached = resolvedPayloadDir;
+        if (cached != null) {
+            return cached;
+        }
+        synchronized (NativePayload.class) {
+            if (resolvedPayloadDir != null) {
+                return resolvedPayloadDir;
+            }
+            Context app = context.getApplicationContext();
+            File nativeDir = nativeLibDir(app);
+            File ollama = new File(nativeDir, OLLAMA_LIB_NAME);
+            File llama = new File(nativeDir, LLAMA_SERVER_LIB_NAME);
+            ensureExecutable(ollama);
+            ensureExecutable(llama);
+
+            File resolved = nativeDir;
+            if (ollama.isFile() && !canRun(ollama, app)) {
+                File fallback = new File(app.getFilesDir(), "payload");
+                File fallbackOllama = new File(fallback, OLLAMA_LIB_NAME);
+                File fallbackLlama = new File(fallback, LLAMA_SERVER_LIB_NAME);
+                if (mkdirs(fallback)
+                        && copyFile(ollama, fallbackOllama)
+                        && copyFile(llama, fallbackLlama)) {
+                    ensureExecutable(fallbackOllama);
+                    ensureExecutable(fallbackLlama);
+                    if (canRun(fallbackOllama, app)) {
+                        android.util.Log.i("RllamaPayload", "using writable payload copy in " + fallback);
+                        resolved = fallback;
+                    }
+                }
+            }
+            resolvedPayloadDir = resolved;
+            return resolved;
+        }
+    }
+
     public static File ollamaBinary(Context context) {
-        return new File(nativeLibDir(context), OLLAMA_LIB_NAME);
+        return new File(payloadDir(context), OLLAMA_LIB_NAME);
     }
 
     public static File llamaServerBinary(Context context) {
-        return new File(nativeLibDir(context), LLAMA_SERVER_LIB_NAME);
+        return new File(payloadDir(context), LLAMA_SERVER_LIB_NAME);
+    }
+
+    /** Runs {@code <binary> --version} to prove the file can really be executed. */
+    static boolean canRun(File binary, Context context) {
+        if (binary == null || !binary.isFile() || !binary.canExecute()) {
+            return false;
+        }
+        Process process = null;
+        try {
+            ProcessBuilder builder = new ProcessBuilder(binary.getAbsolutePath(), "--version");
+            builder.redirectErrorStream(true);
+            builder.environment().put("HOME", new File(context.getFilesDir(), "home").getAbsolutePath());
+            process = builder.start();
+            // Bound the probe so a wedged binary can never hang the UI.
+            return process.waitFor(10, java.util.concurrent.TimeUnit.SECONDS) && process.exitValue() == 0;
+        } catch (Exception e) {
+            android.util.Log.w("RllamaPayload", "cannot execute " + binary + ": " + e.getMessage());
+            return false;
+        } finally {
+            if (process != null) {
+                process.destroy();
+            }
+        }
+    }
+
+    private static boolean copyFile(File from, File to) {
+        if (!from.isFile()) {
+            return false;
+        }
+        java.io.InputStream in = null;
+        java.io.OutputStream out = null;
+        try {
+            in = new java.io.FileInputStream(from);
+            out = new java.io.FileOutputStream(to);
+            byte[] buffer = new byte[1 << 16];
+            int read;
+            while ((read = in.read(buffer)) != -1) {
+                out.write(buffer, 0, read);
+            }
+            out.flush();
+            return true;
+        } catch (Exception e) {
+            android.util.Log.w("RllamaPayload", "copy failed: " + e.getMessage());
+            return false;
+        } finally {
+            closeQuietly(in);
+            closeQuietly(out);
+        }
+    }
+
+    private static void closeQuietly(java.io.Closeable closeable) {
+        if (closeable == null) {
+            return;
+        }
+        try {
+            closeable.close();
+        } catch (Exception ignored) {
+            // best effort
+        }
     }
 
     public static boolean hasOllama(Context context) {
@@ -130,13 +236,26 @@ public final class NativePayload {
 
     /** Human readable summary used by the UI and diagnostics. */
     public static String describe(Context context) {
+        File payload = payloadDir(context);
+        File ollama = new File(payload, OLLAMA_LIB_NAME);
+        File llama = new File(payload, LLAMA_SERVER_LIB_NAME);
         StringBuilder sb = new StringBuilder();
-        sb.append("native libs: ").append(nativeLibDir(context).getAbsolutePath()).append('\n');
-        sb.append("ollama: ").append(hasOllama(context) ? "present" : "missing").append('\n');
-        sb.append("llama-server: ").append(hasLlamaServer(context) ? "present" : "missing").append('\n');
-        sb.append("abi: ").append(android.os.Build.SUPPORTED_ABIS.length > 0 ? android.os.Build.SUPPORTED_ABIS[0] : "unknown");
-        sb.append('\n').append("selftest: ").append(cachedVerification == null ? "(not run yet)" : cachedVerification);
+        sb.append("android: ").append(android.os.Build.VERSION.RELEASE)
+                .append(" (api ").append(android.os.Build.VERSION.SDK_INT).append(")\n");
+        sb.append("abi: ").append(android.os.Build.SUPPORTED_ABIS.length > 0
+                ? android.os.Build.SUPPORTED_ABIS[0] : "unknown").append('\n');
+        sb.append("payload: ").append(payload.getAbsolutePath()).append('\n');
+        sb.append("  ").append(OLLAMA_LIB_NAME).append(": ").append(describeFile(ollama)).append('\n');
+        sb.append("  ").append(LLAMA_SERVER_LIB_NAME).append(": ").append(describeFile(llama)).append('\n');
+        sb.append("selftest: ").append(cachedVerification == null ? "(not run yet)" : cachedVerification);
         return sb.toString();
+    }
+
+    private static String describeFile(File file) {
+        if (!file.isFile()) {
+            return "missing";
+        }
+        return (file.canExecute() ? "ok (" : "not executable (") + file.length() + " bytes)";
     }
 
     /**
@@ -154,7 +273,7 @@ public final class NativePayload {
         mkdirs(models);
         mkdirs(work);
 
-        String nativeDir = nativeLibDir(app).getAbsolutePath();
+        String nativeDir = payloadDir(app).getAbsolutePath();
         env.put("HOME", home.getAbsolutePath());
         env.put("TMPDIR", app.getCacheDir().getAbsolutePath());
         env.put("XDG_CACHE_HOME", new File(home, ".cache").getAbsolutePath());
@@ -198,9 +317,14 @@ public final class NativePayload {
         return result;
     }
 
-    static void mkdirs(File dir) {
-        if (!dir.isDirectory() && !dir.mkdirs() && !dir.isDirectory()) {
-            android.util.Log.w("RllamaPayload", "could not create " + dir);
+    static boolean mkdirs(File dir) {
+        if (dir.isDirectory()) {
+            return true;
         }
+        if (!dir.mkdirs() && !dir.isDirectory()) {
+            android.util.Log.w("RllamaPayload", "could not create " + dir);
+            return false;
+        }
+        return true;
     }
 }

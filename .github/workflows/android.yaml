@@ -263,28 +263,7 @@ jobs:
           name: android-native-payload
           path: android/app/src/main/jniLibs/arm64-v8a
 
-      - name: Prepare signing key (optional)
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            keystore="$RUNNER_TEMP/rllama-release.keystore"
-            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode >"$keystore"
-            echo "ANDROID_KEYSTORE_FILE=$keystore" >>"$GITHUB_ENV"
-            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >>"$GITHUB_ENV"
-            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS" >>"$GITHUB_ENV"
-            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >>"$GITHUB_ENV"
-            echo "release builds will be signed"
-          else
-            echo "::notice::no ANDROID_KEYSTORE_BASE64 secret; release APK will be unsigned"
-          fi
-
-      - name: Build debug and release APKs
+      - name: Build the APK
         working-directory: android
         shell: bash
         env:
@@ -292,7 +271,7 @@ jobs:
           OLLAMA_VERSION_CODE: ${{ needs.native-payload.outputs.version_code }}
         run: |
           log="$RUNNER_TEMP/gradle-build.log"
-          if gradle --no-daemon --stacktrace assembleDebug assembleRelease >"$log" 2>&1; then
+          if gradle --no-daemon --stacktrace assembleDebug >"$log" 2>&1; then
             tail -n 20 "$log"
             exit 0
           fi
@@ -341,24 +320,37 @@ jobs:
             esac
           done
           unzip -l "$apk" | grep -E "assets/licenses" || true
+
+          # The launcher entry must be the terminal, i.e. the CLI the desktop
+          # build exposes, not a custom dashboard.
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          aapt2="$(ls -1 "$sdk"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)"
+          launcher=""
+          if [ -n "$aapt2" ]; then
+            launcher="$("$aapt2" dump badging "$apk" 2>/dev/null | grep -m1 "launchable-activity" || true)"
+          fi
+          if [ -z "$launcher" ]; then
+            # Binary XML stores class names in a string pool that can be UTF-16,
+            # so look at both encodings before giving up.
+            launcher="$(unzip -p "$apk" AndroidManifest.xml | { strings -a; strings -a -e l; } | grep -m1 "TerminalActivity" || true)"
+          fi
+          case "$launcher" in
+            *TerminalActivity*) echo "launcher: $launcher" ;;
+            *)
+              echo "::error::the launcher activity is not TerminalActivity: ${launcher:-<none>}"
+              exit 1
+              ;;
+          esac
           echo "APK payload verified"
 
-      - name: Rename artifacts
+      - name: Name the single APK artifact
         shell: bash
         run: |
           set -euo pipefail
           version="${{ needs.native-payload.outputs.version }}"
           mkdir -p dist
-          shopt -s nullglob
-          for apk in android/app/build/outputs/apk/debug/*.apk; do
-            cp "$apk" "dist/rllama-ollama-${version}-android-arm64-debug.apk"
-          done
-          for apk in android/app/build/outputs/apk/release/*.apk; do
-            case "$apk" in
-              *unsigned*) cp "$apk" "dist/rllama-ollama-${version}-android-arm64-release-unsigned.apk" ;;
-              *) cp "$apk" "dist/rllama-ollama-${version}-android-arm64-release.apk" ;;
-            esac
-          done
+          apk="$(ls android/app/build/outputs/apk/debug/*.apk | head -1)"
+          cp "$apk" "dist/rllama-ollama-${version}-android-arm64.apk"
           ls -l dist
 
       - uses: actions/upload-artifact@v4
