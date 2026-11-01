@@ -114,3 +114,42 @@ func TestFindLibOllamaPath(t *testing.T) {
 		})
 	}
 }
+
+func TestFindLibOllamaPathAndroidNativeLibraryDir(t *testing.T) {
+	root := t.TempDir()
+	nativeLibDir := filepath.Join(root, "data", "app", "~~rllama", "lib", "arm64")
+	if err := os.MkdirAll(nativeLibDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	search := libOllamaPathSearch{
+		executable: filepath.Join(nativeLibDir, "libollama.so"),
+		goos:       "android",
+		goarch:     "arm64",
+	}
+	if got := findLibOllamaPath(search); got != nativeLibDir {
+		t.Fatalf("findLibOllamaPath() = %q, want %q; candidates: %v", got, nativeLibDir, libOllamaPathCandidates(search))
+	}
+}
+
+func TestFindLibOllamaPathEnvOverride(t *testing.T) {
+	root := t.TempDir()
+	payloadDir := filepath.Join(root, "payload")
+	if err := os.MkdirAll(payloadDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	search := libOllamaPathSearch{
+		executable: filepath.Join(root, "bin", "ollama"),
+		goos:       "linux",
+		goarch:     "arm64",
+		envPath:    payloadDir,
+	}
+	candidates := libOllamaPathCandidates(search)
+	if len(candidates) == 0 || candidates[0] != payloadDir {
+		t.Fatalf("first candidate = %v, want %q", candidates, payloadDir)
+	}
+	if got := findLibOllamaPath(search); got != payloadDir {
+		t.Fatalf("findLibOllamaPath() = %q, want %q", got, payloadDir)
+	}
+}

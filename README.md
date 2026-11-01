@@ -38,6 +38,23 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 The official [Ollama Docker image](https://hub.docker.com/r/ollama/ollama) `ollama/ollama` is available on Docker Hub.
 
+### Android
+
+This fork also ships an Android app that bundles the Ollama server and the
+llama.cpp runtime, serves the REST API from the phone, and includes a built-in
+terminal for `ollama …` commands plus one-tap connection snippets for Claude
+Code and other coding agents.
+
+```shell
+# build the native payload, then the APK
+./scripts/build_android.sh
+cd android && gradle assembleDebug
+```
+
+- CI: `.github/workflows/android.yaml` (artifact `ollama-android-apk`)
+- Docs: [docs/android.mdx](docs/android.mdx)
+- App sources: [android/](android/)
+
 ### Libraries
 
 - [ollama-python](https://github.com/ollama/ollama-python)

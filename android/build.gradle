@@ -1,0 +1,6 @@
+// Root build file. The Android application plugin version is pinned here so a
+// plain `gradle assembleDebug` works with the Gradle version used in CI
+// (see .github/workflows/android.yaml).
+plugins {
+    id 'com.android.application' version '8.7.3' apply false
+}

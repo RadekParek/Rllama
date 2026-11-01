@@ -1,0 +1,414 @@
+name: android
+
+# Builds the Android app in addition to the desktop artifacts produced by the
+# existing release.yaml workflow: the native Ollama payload (Go binary plus the
+# llama.cpp server) for arm64-v8a, then the installable APK.
+#
+# Triggered by:
+#   * pushes to main / tags (v*) that touch anything the app depends on
+#   * pull requests touching the app or the native build inputs
+#   * manual runs (workflow_dispatch)
+#
+# When a matching GitHub release already exists for a tag, the APK is attached
+# to it as an extra asset. That step never fails the workflow, so it cannot
+# block the regular release pipeline.
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+    paths:
+      - 'android/**'
+      - 'scripts/build_android.sh'
+      - 'go.mod'
+      - 'go.sum'
+      - 'cmake/**'
+      - 'llama/server/**'
+      - 'llama/compat/**'
+      - 'LLAMA_CPP_VERSION'
+      - 'main.go'
+      - 'cmd/**'
+      - 'ml/**'
+      - 'llm/**'
+      - 'mlx/**'
+      - 'mlxrunner/**'
+      - 'server/**'
+      - '.github/workflows/android.yaml'
+  pull_request:
+    # Pull requests only pay for the (slow) native build when they actually
+    # touch the app. Full Go-level coverage still happens on main.
+    paths:
+      - 'android/**'
+      - 'scripts/build_android.sh'
+      - '.github/workflows/android.yaml'
+      - 'LLAMA_CPP_VERSION'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-payload:
+    name: native payload (android/arm64-v8a)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_code: ${{ steps.version.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          raw="${GITHUB_REF_NAME#v}"
+          version="$(echo "$raw" | sed -e 's/[^A-Za-z0-9._-]/-/g')"
+          if [ -z "$version" ]; then
+            version="0.0.0"
+          fi
+          if echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            code="$(echo "$version" | awk -F. '{printf "%d%02d%02d", $1, $2, $3}')"
+          else
+            code="${{ github.run_number }}"
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "version_code=$code" >>"$GITHUB_OUTPUT"
+          echo "OLLAMA_VERSION=$version" >>"$GITHUB_ENV"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            LLAMA_CPP_VERSION
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build cmake
+
+      - name: Locate the Android NDK
+        id: ndk
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          ndk=""
+          for candidate in "${ANDROID_NDK_HOME:-}" "${ANDROID_NDK_ROOT:-}" "${ANDROID_NDK_LATEST_HOME:-}"; do
+            if [ -n "$candidate" ] && [ -d "$candidate" ]; then ndk="$candidate"; break; fi
+          done
+          if [ -z "$ndk" ] && [ -d "$sdk/ndk" ]; then
+            ndk="$sdk/ndk/$(ls -1 "$sdk/ndk" | sort -V | tail -1)"
+          fi
+          if [ -z "$ndk" ] || [ ! -d "$ndk" ]; then
+            sdkmanager="$sdk/cmdline-tools/latest/bin/sdkmanager"
+            [ -x "$sdkmanager" ] || sdkmanager="$sdk/tools/bin/sdkmanager"
+            yes | "$sdkmanager" --install "ndk;27.0.12077973" >/dev/null
+            ndk="$sdk/ndk/27.0.12077973"
+          fi
+          echo "Using NDK at $ndk"
+          echo "ANDROID_NDK_HOME=$ndk" >>"$GITHUB_ENV"
+          echo "ndk=$ndk" >>"$GITHUB_OUTPUT"
+
+      - name: Cache the llama.cpp Android build tree
+        uses: actions/cache@v4
+        with:
+          path: build/android-arm64
+          key: llama-android-arm64-${{ hashFiles('LLAMA_CPP_VERSION', 'llama/server/CMakeLists.txt', 'llama/compat/compat.cmake', 'scripts/build_android.sh') }}
+          restore-keys: |
+            llama-android-arm64-
+
+      - name: Build native payload
+        run: ./scripts/build_android.sh -a arm64-v8a
+
+      - name: Verify payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir=android/app/src/main/jniLibs/arm64-v8a
+          for payload in "$dir/libollama.so" "$dir/libllama-server.so"; do
+            [ -f "$payload" ] || { echo "::error::missing $payload"; exit 1; }
+            file "$payload"
+            ls -l "$payload"
+            readelf -h "$payload" | grep -E 'Class:|Machine:|Type:'
+            if ! readelf -h "$payload" | grep -q 'AArch64'; then
+              echo "::error::$payload is not an AArch64 binary"
+              exit 1
+            fi
+            if ! readelf -h "$payload" | grep -q 'DYN'; then
+              echo "::error::$payload is not a PIE binary; Android refuses to run it"
+              exit 1
+            fi
+          done
+          # The Go binary must use Android's dynamic loader, not glibc's.
+          if ! readelf -l "$dir/libollama.so" | grep -q 'linker64'; then
+            echo "::error::libollama.so does not request /system/bin/linker64; it was not built for Android"
+            exit 1
+          fi
+          echo "payload looks like a valid Android arm64 PIE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-native-payload
+          path: android/app/src/main/jniLibs/arm64-v8a/*.so
+          if-no-files-found: error
+          retention-days: 14
+
+  app-compile:
+    # Fast feedback for app changes: compiles the app (Java, resources,
+    # manifest) without waiting for the multi-minute native payload build. The
+    # APK produced here has no .so payload, so it is only a compile check.
+    name: app compiles (no payload)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Ensure the Android SDK has platform 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$sdk" ]; then
+            echo "::error::no Android SDK at $sdk"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$sdk" >>"$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$sdk" >>"$GITHUB_ENV"
+          sdkmanager="$sdk/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            echo "::warning::sdkmanager not found; using the preinstalled SDK as is"
+            exit 0
+          fi
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0" >/dev/null 2>&1 \
+            || echo "::warning::could not install missing SDK packages; continuing with what is available"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Compile the app
+        working-directory: android
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/gradle-compile.log"
+          if gradle --no-daemon assembleDebug >"$log" 2>&1; then
+            tail -n 10 "$log"
+            exit 0
+          fi
+          echo "::error::Android app failed to compile"
+          grep -nE "error:|FAILURE:|What went wrong|Execution failed|Could not (resolve|find|create|download)|Unsupported|> Task .* FAILED|Caused by|Cannot|not found|AAPT" "$log" \
+            | head -n 25 \
+            | while IFS= read -r line; do echo "::error::${line}"; done || true
+          echo "----- last 60 log lines -----"
+          tail -n 60 "$log"
+          exit 1
+
+  apk:
+    name: apk
+    runs-on: ubuntu-latest
+    needs: native-payload
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Ensure the Android SDK has platform 35
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          if [ ! -d "$sdk" ]; then
+            echo "::error::no Android SDK at $sdk"
+            exit 1
+          fi
+          echo "ANDROID_HOME=$sdk" >>"$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$sdk" >>"$GITHUB_ENV"
+          echo "Using Android SDK at $sdk"
+          ls "$sdk/platforms" 2>/dev/null || true
+
+          # Runner images ship an SDK; install anything missing on a best effort
+          # basis so a registry hiccup does not fail the build (AGP can also
+          # download what it needs once the licenses are accepted).
+          sdkmanager="$sdk/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$sdkmanager" ]; then
+            echo "::warning::sdkmanager not found; using the preinstalled SDK as is"
+            exit 0
+          fi
+          yes | "$sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$sdkmanager" "platform-tools" "platforms;android-35" "build-tools;35.0.0" >/dev/null 2>&1 \
+            || echo "::warning::could not install missing SDK packages; continuing with what is available"
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-native-payload
+          path: android/app/src/main/jniLibs/arm64-v8a
+
+      - name: Prepare signing key (optional)
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            keystore="$RUNNER_TEMP/rllama-release.keystore"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode >"$keystore"
+            echo "ANDROID_KEYSTORE_FILE=$keystore" >>"$GITHUB_ENV"
+            echo "ANDROID_KEYSTORE_PASSWORD=$ANDROID_KEYSTORE_PASSWORD" >>"$GITHUB_ENV"
+            echo "ANDROID_KEY_ALIAS=$ANDROID_KEY_ALIAS" >>"$GITHUB_ENV"
+            echo "ANDROID_KEY_PASSWORD=$ANDROID_KEY_PASSWORD" >>"$GITHUB_ENV"
+            echo "release builds will be signed"
+          else
+            echo "::notice::no ANDROID_KEYSTORE_BASE64 secret; release APK will be unsigned"
+          fi
+
+      - name: Build debug and release APKs
+        working-directory: android
+        shell: bash
+        env:
+          OLLAMA_VERSION: ${{ needs.native-payload.outputs.version }}
+          OLLAMA_VERSION_CODE: ${{ needs.native-payload.outputs.version_code }}
+        run: |
+          log="$RUNNER_TEMP/gradle-build.log"
+          if gradle --no-daemon --stacktrace assembleDebug assembleRelease >"$log" 2>&1; then
+            tail -n 20 "$log"
+            exit 0
+          fi
+          # Surface the useful lines as check-run annotations so a failure is
+          # diagnosable even when the raw log is not easily reachable.
+          echo "::error::Gradle build failed"
+          grep -nE "error:|FAILURE:|What went wrong|Execution failed|Could not (resolve|find|create|download)|Unsupported|> Task .* FAILED|Caused by|Cannot|not found" "$log" \
+            | head -n 20 \
+            | while IFS= read -r line; do echo "::error::${line}"; done || true
+          echo "----- last 80 log lines -----"
+          tail -n 80 "$log"
+          exit 1
+
+      - name: Upload gradle log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gradle-build-log
+          path: ${{ runner.temp }}/gradle-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Verify the APK contains an executable payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(ls android/app/build/outputs/apk/debug/*.apk | head -1)"
+          echo "inspecting $apk"
+          for lib in lib/arm64-v8a/libollama.so lib/arm64-v8a/libllama-server.so; do
+            entry="$(unzip -lv "$apk" | grep " $lib" || true)"
+            if [ -z "$entry" ]; then
+              echo "::error::$apk is missing $lib"
+              exit 1
+            fi
+            echo "$entry"
+            # With useLegacyPackaging/extractNativeLibs the payload is stored
+            # *compressed* and unpacked by the installer; with the modern
+            # default it stays uncompressed inside the APK, which Android maps
+            # read-only and refuses to execute.
+            case "$entry" in
+              *Defl*) echo "  -> compressed: extracted on install (executable)" ;;
+              *)
+                echo "::error::$lib is stored uncompressed; the installer will not extract it, so the app cannot execute it"
+                exit 1
+                ;;
+            esac
+          done
+          unzip -l "$apk" | grep -E "assets/licenses" || true
+          echo "APK payload verified"
+
+      - name: Rename artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ needs.native-payload.outputs.version }}"
+          mkdir -p dist
+          shopt -s nullglob
+          for apk in android/app/build/outputs/apk/debug/*.apk; do
+            cp "$apk" "dist/rllama-ollama-${version}-android-arm64-debug.apk"
+          done
+          for apk in android/app/build/outputs/apk/release/*.apk; do
+            case "$apk" in
+              *unsigned*) cp "$apk" "dist/rllama-ollama-${version}-android-arm64-release-unsigned.apk" ;;
+              *) cp "$apk" "dist/rllama-ollama-${version}-android-arm64-release.apk" ;;
+            esac
+          done
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ollama-android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+          retention-days: 30
+
+  attach-to-release:
+    name: attach APK to release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [native-payload, apk]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ollama-android-apk
+          path: dist
+
+      - name: Attach APK to the release for this tag
+        shell: bash
+        timeout-minutes: 15
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          shopt -s nullglob
+          assets=(dist/*.apk)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "::warning::no APK artifacts to upload"
+            exit 0
+          fi
+
+          # release.yaml publishes the release for this tag in parallel; wait a
+          # little so the APK usually lands in the same release. Everything here
+          # is best effort and never fails the workflow.
+          for attempt in $(seq 1 20); do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              if gh release upload "$tag" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"; then
+                echo "attached ${#assets[@]} APK(s) to $tag"
+                exit 0
+              fi
+              echo "::warning::upload attempt $attempt failed; retrying"
+            else
+              echo "release for $tag not published yet (attempt $attempt)"
+            fi
+            sleep 30
+          done
+          echo "::notice::could not attach the APK to $tag; it stays available as the ollama-android-apk workflow artifact"

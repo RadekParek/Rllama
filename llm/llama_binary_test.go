@@ -173,3 +173,45 @@ func TestLlamaCppBinarySearchPrefersPlatformBuildOutput(t *testing.T) {
 		t.Fatalf("findLlamaCppBinary = %q, want %q", got, cudaBin)
 	}
 }
+
+func TestFindLlamaCppBinaryAndroidSharedLibraryName(t *testing.T) {
+	dir := t.TempDir()
+	want := filepath.Join(dir, "libllama-server.so")
+	if err := os.WriteFile(want, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, candidates, err := findLlamaCppBinary("llama-server", llamaCppBinarySearch{
+		libOllamaPath: dir,
+		goos:          "android",
+		goarch:        "arm64",
+	})
+	if err != nil {
+		t.Fatalf("findLlamaCppBinary() error = %v; candidates: %v", err, candidates)
+	}
+	if got != want {
+		t.Fatalf("findLlamaCppBinary() = %q, want %q", got, want)
+	}
+	if !slices.Contains(candidates, want) {
+		t.Fatalf("expected shared library candidate %q in %v", want, candidates)
+	}
+}
+
+func TestFindLlamaCppBinaryPrefersPlainName(t *testing.T) {
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "llama-server")
+	if err := os.WriteFile(plain, nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "libllama-server.so"), nil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, _, err := findLlamaCppBinary("llama-server", llamaCppBinarySearch{libOllamaPath: dir, goos: "linux", goarch: "amd64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != plain {
+		t.Fatalf("findLlamaCppBinary() = %q, want %q", got, plain)
+	}
+}

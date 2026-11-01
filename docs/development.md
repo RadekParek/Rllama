@@ -185,3 +185,27 @@ Ollama looks for native helper binaries and acceleration libraries in installed 
 * `build/lib/ollama` and `dist/<platform>/lib/ollama` for local development builds
 
 If the libraries are not found, Ollama will not run with any acceleration libraries.
+
+## Android
+
+The Android app lives in `android/` and reuses the same Go binary and llama.cpp
+payload, cross-compiled with the Android NDK. Build the payload first, then the
+APK:
+
+```shell
+ANDROID_NDK_HOME=/path/to/ndk ./scripts/build_android.sh -a arm64-v8a
+cd android && gradle assembleDebug
+```
+
+`scripts/build_android.sh` writes `libollama.so` and `libllama-server.so` into
+`android/app/src/main/jniLibs/arm64-v8a/`, which is where the APK picks them up.
+Those two files keep the `lib*.so` spelling because Android only extracts (and
+lets apps execute) entries named like shared libraries from the native library
+directory:
+
+* `OLLAMA_LIBRARY_PATH` (see `ml/path.go`) overrides the detected payload root
+* `llm/llama_binary.go` falls back to `lib<llama-server>.so` when the plain name
+  is missing
+
+See [android](/android) for the user-facing documentation and
+`android/README.md` for the app architecture.

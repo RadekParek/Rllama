@@ -16,3 +16,12 @@ llama/build
 llama/vendor
 /ollama
 integration/testdata/models/
+
+# Android app
+android/.gradle
+android/local.properties
+android/.idea
+android/app/src/main/jniLibs/*/*.so
+android/app/src/main/assets/licenses/
+android/*.jks
+android/*.keystore

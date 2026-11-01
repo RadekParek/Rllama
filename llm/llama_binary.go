@@ -44,7 +44,42 @@ func findLlamaCppBinary(name string, search llamaCppBinarySearch) (string, []str
 		}
 	}
 
-	return "", candidates, os.ErrNotExist
+	// Android apps can only execute files that the package manager extracted
+	// into the app's native library directory, and it only extracts entries
+	// named lib*.so. Release builds therefore ship llama-server as
+	// libllama-server.so, so retry the plain candidates with that spelling
+	// before reporting the payload as missing.
+	sharedLibraryCandidates := llamaCppSharedLibraryCandidates(name, candidates)
+	for _, path := range sharedLibraryCandidates {
+		if _, err := os.Stat(path); err == nil {
+			return path, append(candidates, sharedLibraryCandidates...), nil
+		}
+	}
+
+	return "", append(candidates, sharedLibraryCandidates...), os.ErrNotExist
+}
+
+// llamaCppSharedLibraryCandidates rewrites every candidate to the shared
+// library spelling ("llama-server" -> "libllama-server.so") used by packaging
+// formats that only accept files named lib*.so, most notably Android APKs.
+func llamaCppSharedLibraryCandidates(name string, candidates []string) []string {
+	if filepath.Ext(name) != "" {
+		// Windows binaries keep their .exe suffix and are never repackaged.
+		return nil
+	}
+
+	libName := "lib" + name + ".so"
+	seen := map[string]bool{}
+	sharedLibraryCandidates := make([]string, 0, len(candidates))
+	for _, path := range candidates {
+		candidate := filepath.Join(filepath.Dir(path), libName)
+		if seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		sharedLibraryCandidates = append(sharedLibraryCandidates, candidate)
+	}
+	return sharedLibraryCandidates
 }
 
 func llamaCppBinaryCandidates(name string, search llamaCppBinarySearch) []string {
