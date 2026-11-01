@@ -6,6 +6,9 @@ export default defineConfig({
   // The sandbox/preview host is not localhost, so allow proxied hosts.
   server: { host: '0.0.0.0', port: 5173, allowedHosts: true },
   preview: { host: '0.0.0.0', port: 4173, allowedHosts: true },
+  // Relative asset paths: Electron loads dist/index.html over file:// and
+  // Capacitor serves it from the app bundle, so absolute /assets paths break.
+  base: './',
   build: { outDir: 'dist', sourcemap: false },
   test: {
     environment: 'node',

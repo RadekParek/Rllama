@@ -1,4 +1,12 @@
 node_modules/
 dist/
+release/
 *.local
 .DS_Store
+
+# Capacitor copies the built web bundle into the Android project.
+android/app/src/main/assets/public/
+android/app/build/
+android/build/
+android/.gradle/
+android/local.properties
