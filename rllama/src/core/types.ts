@@ -1,15 +1,18 @@
 /**
  * Shared types for Rllama.
  *
- * Rllama talks to three wire protocols only:
- *  - `openai`    : /chat/completions  (OpenAI, AgentRouter, OpenRouter, DeepSeek, Kimi, Groq, Ollama Cloud ...)
- *  - `anthropic` : /v1/messages       (Anthropic, and AgentRouter's Anthropic-compatible mode)
- *  - `ollama`    : /api/chat + /api/tags (a local or remote Ollama daemon)
+ * Rllama talks to four wire protocols only:
+ *  - `openai`           : /chat/completions (OpenAI, OpenRouter, DeepSeek, Kimi, Groq, Ollama Cloud ...)
+ *  - `openai-responses` : /responses        (the newer OpenAI wire API; this is what
+ *                         Codex uses via `wire_api = "responses"`, and the only mode
+ *                         that exposes some AgentRouter models)
+ *  - `anthropic`        : /v1/messages       (Anthropic, and AgentRouter's Anthropic mode)
+ *  - `ollama`           : /api/chat + /api/tags (a local or remote Ollama daemon)
  *
  * Everything else in the app is built on top of these.
  */
 
-export type Protocol = 'openai' | 'anthropic' | 'ollama';
+export type Protocol = 'openai' | 'openai-responses' | 'anthropic' | 'ollama';
 
 export type Role = 'system' | 'user' | 'assistant';
 
@@ -52,6 +55,23 @@ export interface ModelInfo {
   id: string;
   label: string;
   details?: string;
+  /** Context window in tokens, when the provider reports one. */
+  context?: number;
+}
+
+/** A model from the bundled Ollama catalog (https://ollama.com/search). */
+export interface CatalogModel {
+  /** Canonical pull name: `llama3.1`, `treyleo16/claude-mythos-5-1`. */
+  name: string;
+  description: string;
+  /** tools | thinking | vision | embedding | audio | cloud ... */
+  capabilities: string[];
+  /** Tag sizes the family publishes, e.g. ["1b", "8b", "70b"]. */
+  sizes?: string[];
+  context?: string;
+  downloads?: string;
+  /** Runs on ollama.com rather than on this machine. */
+  cloud?: boolean;
 }
 
 export interface TokenUsage {

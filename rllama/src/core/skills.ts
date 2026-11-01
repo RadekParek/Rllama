@@ -44,6 +44,23 @@ export const BUILTIN_SKILLS: Skill[] = [
     ].join('\n'),
   },
   {
+    id: 'openrouter',
+    name: 'OpenRouter',
+    description: 'Route work across OpenRouter models: pick by price, context and free tiers; fail over cleanly.',
+    builtin: true,
+    prompt: [
+      'SKILL: OPENROUTER ROUTING.',
+      'You are choosing and using models through OpenRouter, which exposes many vendors behind one key.',
+      'Rules:',
+      '- Model ids are vendor/model, and a trailing :free marks a zero-cost variant. Never assume a model exists: say which id you are using and why.',
+      '- Match the model to the job: cheap and fast for reformatting and extraction, long-context models for whole repositories, reasoning models only when the task actually needs deliberation.',
+      '- State the trade you made in one line (cost, speed, context) so the user can overrule it.',
+      '- If a call fails with 402/429, name the next candidate model and continue there instead of retrying the same one.',
+      '- Prefer prompt caching and short system prompts for repeated work; put stable instructions first and volatile context last.',
+      '- Never invent pricing or context sizes you have not been given; describe them as approximate if unsure.',
+    ].join('\n'),
+  },
+  {
     id: 'planner',
     name: 'Planner',
     description: 'Plans before touching code: numbered steps, risks, acceptance criteria.',
@@ -104,6 +121,12 @@ export const BUILTIN_SKILLS: Skill[] = [
     ].join('\n'),
   },
 ];
+
+/**
+ * The packs the user asked to ship pre-installed. They are pinned to the top of
+ * the Skills drawer and to the composer chip row.
+ */
+export const PINNED_SKILLS = ['caveman', 'rea', 'openrouter'];
 
 export function allSkills(custom: Skill[]): Skill[] {
   return [...BUILTIN_SKILLS, ...custom];

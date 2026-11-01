@@ -1,10 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { listModels, ProviderError, streamChat } from './core/client';
-import { allSkills, buildSystemPrompt } from './core/skills';
+import { pullModel, type PullProgress } from './core/ollama';
+import { allSkills, buildSystemPrompt, PINNED_SKILLS } from './core/skills';
 import { loadState, newThread, pruneUsage, saveState, uid, type PersistedState } from './core/store';
 import {
   chooseProvider,
   clearProviderError,
+  formatTokens,
   markProviderError,
   nextProvider,
   recordUsage,
@@ -13,70 +15,68 @@ import {
   usageLevel,
   usageOf,
   usageRatio,
-  formatTokens,
-  type UsageMap,
 } from './core/usage';
-import type { ChatMessage, ModelInfo, Provider, Skill, Thread } from './core/types';
-import { Markdown } from './ui/Markdown';
-import { ProvidersPanel, SkillsPanel, UsagePanel } from './ui/Panels';
-
-type PanelId = 'providers' | 'skills' | 'usage' | null;
+import type { ChatMessage, Message, ModelInfo, Provider, Skill, Thread } from './core/types';
+import { Drawer } from './ui/Drawer';
+import { Composer, ModelPicker, Sidebar, ThreadView, TopBar, type PanelId, type SlashCommand } from './ui/Shell';
+import { ProvidersPanel } from './ui/panels/Providers';
+import { SkillsPanel } from './ui/panels/Skills';
+import { CatalogPanel, type PullState } from './ui/panels/Catalog';
+import { UsagePanel } from './ui/panels/Usage';
 
 export default function App(): React.ReactElement {
   const [state, setState] = useState<PersistedState>(() => loadState());
-  const [modelsByProvider, setModelsByProvider] = useState<Record<string, ModelInfo[]>>({});
-  const [modelStatus, setModelStatus] = useState<Record<string, string>>({});
   const [panel, setPanel] = useState<PanelId>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
+  const [modelStatus, setModelStatus] = useState<Record<string, string>>({});
+  const [testStatus, setTestStatus] = useState<Record<string, string>>({});
+  const [pullState, setPullState] = useState<Record<string, PullState>>({});
   const abortRef = useRef<AbortController | null>(null);
-  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     saveState(state);
   }, [state]);
+
+  const patchState = useCallback((patch: Partial<PersistedState>) => {
+    setState((previous) => ({ ...previous, ...patch }));
+  }, []);
 
   const thread = useMemo<Thread>(() => {
     const found = state.threads.find((item) => item.id === state.activeThreadId);
     return found ?? state.threads[0];
   }, [state.threads, state.activeThreadId]);
 
-  const enabledProviders = useMemo(() => state.providers.filter((provider) => provider.enabled), [state.providers]);
-
   const skills = useMemo<Skill[]>(() => allSkills(state.customSkills), [state.customSkills]);
 
-  const activeProvider = useMemo<Provider | undefined>(() => {
-    if (thread.providerId) {
-      const found = state.providers.find((provider) => provider.id === thread.providerId);
-      if (found) {
-        return found;
-      }
-    }
-    return enabledProviders[0];
-  }, [thread.providerId, state.providers, enabledProviders]);
-
-  useEffect(() => {
-    const node = scrollRef.current;
-    if (node) {
-      node.scrollTop = node.scrollHeight;
-    }
-  }, [thread?.messages, busy]);
-
-  const patchState = useCallback((patch: Partial<PersistedState>) => {
-    setState((previous) => ({ ...previous, ...patch }));
-  }, []);
-
-  const patchThread = useCallback(
-    (threadId: string, updater: (value: Thread) => Thread) => {
-      setState((previous) => ({
-        ...previous,
-        threads: previous.threads.map((item) => (item.id === threadId ? updater(item) : item)),
-      }));
-    },
-    [],
+  const enabledProviders = useMemo(
+    () => state.providers.filter((provider) => provider.enabled),
+    [state.providers],
   );
+
+  const activeProvider = useMemo<Provider | undefined>(() => {
+    const found = thread?.providerId ? state.providers.find((item) => item.id === thread.providerId) : undefined;
+    return found ?? enabledProviders[0] ?? state.providers[0];
+  }, [thread?.providerId, state.providers, enabledProviders]);
+
+  const activeModel = activeProvider
+    ? state.modelByProvider[activeProvider.id] ?? thread?.model ?? state.modelsByProvider[activeProvider.id]?.[0]?.id ?? ''
+    : '';
+
+  const modelCount = useMemo(
+    () => Object.values(state.modelsByProvider).reduce((total, models) => total + models.length, 0),
+    [state.modelsByProvider],
+  );
+
+  const patchThread = useCallback((threadId: string, updater: (value: Thread) => Thread) => {
+    setState((previous) => ({
+      ...previous,
+      threads: previous.threads.map((item) => (item.id === threadId ? updater(item) : item)),
+    }));
+  }, []);
 
   const createThread = useCallback(() => {
     const created = newThread(state.skillIds);
@@ -89,20 +89,19 @@ export default function App(): React.ReactElement {
     setSidebarOpen(false);
   }, [state.skillIds, activeProvider]);
 
-  const deleteThread = useCallback(
-    (threadId: string) => {
-      setState((previous) => {
-        const remaining = previous.threads.filter((item) => item.id !== threadId);
-        const threads = remaining.length > 0 ? remaining : [newThread(previous.skillIds)];
-        return {
-          ...previous,
-          threads,
-          activeThreadId: previous.activeThreadId === threadId ? threads[0].id : previous.activeThreadId,
-        };
-      });
-    },
-    [],
-  );
+  const deleteThread = useCallback((threadId: string) => {
+    setState((previous) => {
+      const remaining = previous.threads.filter((item) => item.id !== threadId);
+      const threads = remaining.length > 0 ? remaining : [newThread(previous.skillIds)];
+      return {
+        ...previous,
+        threads,
+        activeThreadId: previous.activeThreadId === threadId ? threads[0].id : previous.activeThreadId,
+      };
+    });
+  }, []);
+
+  /* ------------------------------------------------------------- models */
 
   const fetchModels = useCallback(
     (providerId: string) => {
@@ -112,11 +111,21 @@ export default function App(): React.ReactElement {
       }
       setModelStatus((previous) => ({ ...previous, [providerId]: 'loading…' }));
       void listModels(provider)
-        .then((models) => {
-          setModelsByProvider((previous) => ({ ...previous, [providerId]: models }));
+        .then((models: ModelInfo[]) => {
+          setState((previous) => ({
+            ...previous,
+            modelsByProvider: { ...previous.modelsByProvider, [providerId]: models },
+            modelByProvider: {
+              ...previous.modelByProvider,
+              [providerId]: previous.modelByProvider[providerId] ?? models[0]?.id ?? '',
+            },
+          }));
           setModelStatus((previous) => ({
             ...previous,
-            [providerId]: models.length === 0 ? 'the provider returned no models' : `${models.length} models`,
+            [providerId]:
+              models.length === 0
+                ? 'the provider returned no models — check the key and base URL'
+                : `${models.length} models`,
           }));
         })
         .catch((error: unknown) => {
@@ -127,22 +136,53 @@ export default function App(): React.ReactElement {
     [state.providers],
   );
 
+  const testProvider = useCallback(
+    (providerId: string) => {
+      const provider = state.providers.find((item) => item.id === providerId);
+      if (!provider) {
+        return;
+      }
+      setTestStatus((previous) => ({ ...previous, [providerId]: 'testing…' }));
+      void listModels(provider)
+        .then((models) => {
+          setTestStatus((previous) => ({
+            ...previous,
+            [providerId]:
+              models.length > 0
+                ? `reachable — ${models.length} models for this key (${models.slice(0, 3).map((model) => model.id).join(', ')}${
+                    models.length > 3 ? ', …' : ''
+                  })`
+                : 'reachable, but the key exposes no models',
+          }));
+          setState((previous) => ({
+            ...previous,
+            modelsByProvider: { ...previous.modelsByProvider, [providerId]: models },
+          }));
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setTestStatus((previous) => ({ ...previous, [providerId]: message }));
+        });
+    },
+    [state.providers],
+  );
+
   const selectModel = useCallback((providerId: string, model: string) => {
     setState((previous) => ({
       ...previous,
       modelByProvider: { ...previous.modelByProvider, [providerId]: model },
       threads: previous.threads.map((item) =>
-        item.id === previous.activeThreadId ? { ...item, model } : item,
+        item.id === previous.activeThreadId ? { ...item, providerId, model } : item,
       ),
     }));
   }, []);
 
+  /* -------------------------------------------------------------- skills */
+
   const toggleSkill = useCallback((skillId: string) => {
     setState((previous) => {
-      const enabled = previous.skillIds.includes(skillId);
-      const skillIds = enabled
-        ? previous.skillIds.filter((id) => id !== skillId)
-        : [...previous.skillIds, skillId];
+      const on = previous.skillIds.includes(skillId);
+      const skillIds = on ? previous.skillIds.filter((id) => id !== skillId) : [...previous.skillIds, skillId];
       return {
         ...previous,
         skillIds,
@@ -153,22 +193,60 @@ export default function App(): React.ReactElement {
     });
   }, []);
 
+  /* ------------------------------------------------------------ catalogue */
+
+  const startPull = useCallback(
+    (providerId: string, model: string) => {
+      const provider = state.providers.find((item) => item.id === providerId);
+      if (!provider) {
+        return;
+      }
+      setPullState((previous) => ({ ...previous, [model]: { status: 'starting' } }));
+      void pullModel(provider, model, (progress: PullProgress) => {
+        setPullState((previous) => ({
+          ...previous,
+          [model]: {
+            status: progress.percent !== undefined ? `${progress.status} ${progress.percent}%` : progress.status,
+            percent: progress.percent,
+          },
+        }));
+      })
+        .then((final) => {
+          setPullState((previous) => ({
+            ...previous,
+            [model]: { status: final.status, percent: final.status === 'success' ? 100 : final.percent },
+          }));
+          if (final.status === 'success') {
+            setNotice(`Pulled ${model}.`);
+            fetchModels(providerId);
+          }
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          setPullState((previous) => ({ ...previous, [model]: { status: 'failed', error: message } }));
+        });
+    },
+    [state.providers, fetchModels],
+  );
+
+  /* ----------------------------------------------------------------- chat */
+
   const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
     setBusy(false);
   }, []);
 
-  const send = useCallback(async () => {
-    const text = draft.trim();
+  const send = useCallback(async (textOverride?: string) => {
+    const text = (textOverride ?? draft).trim();
     if (!text || busy || !thread) {
       return;
     }
 
     const choice = chooseProvider(state.providers, state.usage, thread.providerId, state.failoverEnabled);
-    let provider = choice.provider;
+    const provider = choice.provider;
     if (!provider) {
-      setNotice('Add a provider first — open Providers and paste a key.');
+      setNotice('Add a provider first — open Providers, paste a key, then load its models.');
       setPanel('providers');
       return;
     }
@@ -176,33 +254,22 @@ export default function App(): React.ReactElement {
       setNotice(`Switched to ${provider.name}: ${choice.reason ?? 'budget reached'}.`);
     }
 
-    const fallbackTemplate = state.providers.find((item) => item.id === provider?.id);
-    if (!fallbackTemplate) {
-      return;
-    }
-
     const requestedModel =
-      state.modelByProvider[provider.id] ?? thread.model ?? modelsByProvider[provider.id]?.[0]?.id;
+      state.modelByProvider[provider.id] ?? thread.model ?? state.modelsByProvider[provider.id]?.[0]?.id;
     if (!requestedModel) {
-      setNotice(`Pick a model for ${provider.name} (Providers → Load models).`);
+      setNotice(`${provider.name} has no model selected yet — open Providers and press “Load models”.`);
       setPanel('providers');
       return;
     }
 
     setDraft('');
-    setNotice(null);
     setBusy(true);
 
-    const userMessage = {
-      id: uid('msg'),
-      role: 'user' as const,
-      content: text,
-      createdAt: Date.now(),
-    };
+    const userMessage: Message = { id: uid('msg'), role: 'user', content: text, createdAt: Date.now() };
     const assistantId = uid('msg');
-    const assistantBase = {
+    const assistantBase: Message = {
       id: assistantId,
-      role: 'assistant' as const,
+      role: 'assistant',
       content: '',
       createdAt: Date.now(),
       providerId: provider.id,
@@ -212,18 +279,18 @@ export default function App(): React.ReactElement {
     patchThread(thread.id, (value) => ({
       ...value,
       title: value.messages.length === 0 ? text.slice(0, 48) : value.title,
-      providerId: provider?.id ?? value.providerId,
+      providerId: provider.id,
       model: requestedModel,
       messages: [...value.messages, userMessage, assistantBase],
       updatedAt: Date.now(),
     }));
 
     const history: ChatMessage[] = thread.messages
-      .filter((message) => !message.error)
+      .filter((message) => !message.error && message.content)
       .map((message) => ({ role: message.role, content: message.content }));
     history.push({ role: 'user', content: text });
 
-    const system = buildSystemPrompt(thread.skillIds, state.customSkills, state.systemPrompt);
+    const system = buildSystemPrompt(state.skillIds, state.customSkills, state.systemPrompt);
     const controller = new AbortController();
     abortRef.current = controller;
 
@@ -247,94 +314,85 @@ export default function App(): React.ReactElement {
           },
         },
       });
-      setState((previous) => {
-        const usage = recordUsage(previous.usage, target.id, result.usage);
-        return { ...previous, usage: clearProviderError(usage, target.id) };
-      });
+      setState((previous) => ({
+        ...previous,
+        usage: clearProviderError(recordUsage(previous.usage, target.id, result.usage), target.id),
+      }));
       return buffer;
     };
 
-    try {
-      await runAttempt(provider, requestedModel);
+    const settle = (answeredBy: Provider, model: string) => {
       patchThread(thread.id, (value) => ({
         ...value,
         messages: value.messages.map((message) =>
           message.id === assistantId
-            ? { ...message, answeredBy: provider?.name, providerId: provider?.id, model: requestedModel }
+            ? { ...message, answeredBy: answeredBy.name, providerId: answeredBy.id, model }
             : message,
         ),
         updatedAt: Date.now(),
       }));
+    };
+
+    try {
+      await runAttempt(provider, requestedModel);
+      settle(provider, requestedModel);
     } catch (error) {
       const aborted = error instanceof DOMException && error.name === 'AbortError';
       if (aborted) {
         patchThread(thread.id, (value) => ({
           ...value,
           messages: value.messages.map((message) =>
-            message.id === assistantId && !message.content
-              ? { ...message, content: '(stopped)' }
-              : message,
+            message.id === assistantId && !message.content ? { ...message, content: '(stopped)' } : message,
           ),
         }));
-        setBusy(false);
-        abortRef.current = null;
         return;
       }
 
       const failure = error instanceof Error ? error.message : String(error);
       let handled = false;
+
       if (state.failoverEnabled) {
-        const alternative = provider ? nextProvider(state.providers, state.usage, provider.id) : undefined;
-        if (alternative && (error instanceof ProviderError ? error.isFailoverWorthy : true)) {
-          const alternativeModel =
-            state.modelByProvider[alternative.id] ?? modelsByProvider[alternative.id]?.[0]?.id;
-          if (alternativeModel) {
-            setNotice(`${provider.name} failed (${failure.slice(0, 120)}). Continuing on ${alternative.name}.`);
-            try {
-              await runAttempt(alternative, alternativeModel);
-              patchThread(thread.id, (value) => ({
-                ...value,
-                messages: value.messages.map((message) =>
-                  message.id === assistantId
-                    ? {
-                        ...message,
-                        answeredBy: alternative.name,
-                        providerId: alternative.id,
-                        model: alternativeModel,
-                      }
-                    : message,
-                ),
-                updatedAt: Date.now(),
-              }));
-              handled = true;
-            } catch (secondError) {
-              const secondMessage = secondError instanceof Error ? secondError.message : String(secondError);
-              setState((previous) => ({ ...previous, usage: markProviderError(previous.usage, alternative.id, secondMessage) }));
-              patchThread(thread.id, (value) => ({
-                ...value,
-                messages: value.messages.map((message) =>
-                  message.id === assistantId ? { ...message, error: secondMessage } : message,
-                ),
-              }));
-            }
+        const alternative = nextProvider(state.providers, state.usage, provider.id);
+        const worthy = error instanceof ProviderError ? error.isFailoverWorthy : true;
+        const alternativeModel = alternative
+          ? state.modelByProvider[alternative.id] ?? state.modelsByProvider[alternative.id]?.[0]?.id
+          : undefined;
+        if (alternative && alternativeModel && worthy) {
+          setNotice(`${provider.name} failed. Continuing on ${alternative.name}.`);
+          try {
+            await runAttempt(alternative, alternativeModel);
+            settle(alternative, alternativeModel);
+            handled = true;
+          } catch (secondError) {
+            const secondMessage = secondError instanceof Error ? secondError.message : String(secondError);
+            setState((previous) => ({
+              ...previous,
+              usage: markProviderError(previous.usage, alternative.id, secondMessage),
+            }));
+            patchThread(thread.id, (value) => ({
+              ...value,
+              messages: value.messages.map((message) =>
+                message.id === assistantId ? { ...message, error: secondMessage } : message,
+              ),
+            }));
+            handled = true;
           }
         }
       }
 
       if (!handled) {
-        if (provider) {
-          setState((previous) => ({ ...previous, usage: markProviderError(previous.usage, provider.id, failure) }));
-        }
+        const hint =
+          error instanceof ProviderError && error.isProtocolMismatch
+            ? ` ${provider.protocol === 'openai-responses' ? 'This gateway may only speak Chat Completions' : 'This gateway may need the Responses wire API'} — use “Switch wire API”.`
+            : '';
+        setState((previous) => ({
+          ...previous,
+          usage: markProviderError(previous.usage, provider.id, failure),
+        }));
         patchThread(thread.id, (value) => ({
           ...value,
           messages: value.messages.map((message) =>
-            message.id === assistantId
-              ? {
-                  ...message,
-                  content: message.content || '',
-                  error: failure,
-                }
-              : message,
+            message.id === assistantId ? { ...message, error: `${failure}${hint}` } : message,
           ),
         }));
       }
@@ -352,280 +410,305 @@ export default function App(): React.ReactElement {
     state.customSkills,
     state.systemPrompt,
     state.modelByProvider,
-    modelsByProvider,
+    state.modelsByProvider,
+    state.skillIds,
     patchThread,
   ]);
 
-  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      void send();
+  /* -------------------------------------------------------------- actions */
+
+  const switchWireApi = useCallback(
+    (providerId: string) => {
+      const provider = state.providers.find((item) => item.id === providerId);
+      if (!provider) {
+        return;
+      }
+      const next =
+        provider.protocol === 'openai-responses'
+          ? { protocol: 'openai' as const }
+          : provider.protocol === 'openai'
+            ? { protocol: 'openai-responses' as const }
+            : { protocol: 'openai' as const };
+      setState((previous) => ({
+        ...previous,
+        providers: previous.providers.map((item) =>
+          item.id === providerId ? { ...item, ...next } : item,
+        ),
+      }));
+      setNotice(
+        `${provider.name} switched to ${next.protocol === 'openai' ? 'Chat Completions' : 'Responses'} — retry the message.`,
+      );
+    },
+    [state.providers],
+  );
+
+  const retry = useCallback(
+    (message: Message) => {
+      if (!thread) {
+        return;
+      }
+      const index = thread.messages.findIndex((item) => item.id === message.id);
+      const previous = index > 0 ? thread.messages[index - 1] : undefined;
+      const text = previous?.role === 'user' ? previous.content : '';
+      if (!text) {
+        setNotice('Nothing to retry — that answer has no question in this chat.');
+        return;
+      }
+      patchThread(thread.id, (value) => ({
+        ...value,
+        providerId: message.providerId ?? value.providerId,
+        messages: value.messages.filter(
+          (item) => item.id !== message.id && item.id !== previous?.id,
+        ),
+      }));
+      setDraft('');
+      void send(text);
+    },
+    [thread, patchThread, send],
+  );
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        createThread();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [createThread]);
+
+  const commands: SlashCommand[] = useMemo(
+    () => [
+      { id: 'caveman', label: 'Toggle Caveman', hint: 'token compression', run: () => toggleSkill('caveman') },
+      { id: 'rea', label: 'Toggle REA', hint: 'reverse engineering', run: () => toggleSkill('rea') },
+      { id: 'openrouter', label: 'Toggle OpenRouter', hint: 'routing skill', run: () => toggleSkill('openrouter') },
+      { id: 'new', label: 'New chat', hint: '⌘K', run: createThread },
+      { id: 'providers', label: 'Open providers', run: () => setPanel('providers') },
+      { id: 'models', label: 'Browse model catalog', run: () => setPanel('catalog') },
+      { id: 'skills', label: 'Open skills', run: () => setPanel('skills') },
+      { id: 'usage', label: 'Open usage', run: () => setPanel('usage') },
+    ],
+    [toggleSkill, createThread],
+  );
+
+  /* ------------------------------------------------------------------ view */
+
+  const rawLevel = usageLevel(activeProvider ? usageOf(state.usage, activeProvider.id) : undefined);
+  const level: 'ok' | 'warn' | 'danger' = rawLevel === 'ok' ? 'ok' : rawLevel === 'warn' ? 'warn' : 'danger';
+  const ratio = usageRatio(activeProvider ? usageOf(state.usage, activeProvider.id) : undefined);
+  const usageEntry = activeProvider ? usageOf(state.usage, activeProvider.id) : undefined;
+  const usageLabel = usageEntry?.limitTokens
+    ? `${Math.round(ratio * 100)}% of ${formatTokens(usageEntry.limitTokens)}`
+    : `${formatTokens((usageEntry?.promptTokens ?? 0) + (usageEntry?.completionTokens ?? 0))} tokens`;
+
+  const installedByProvider = useMemo(() => {
+    const map: Record<string, string[]> = {};
+    for (const [providerId, models] of Object.entries(state.modelsByProvider)) {
+      map[providerId] = models.map((model) => model.id);
     }
-  };
-
-  const modelChoices = activeProvider ? modelsByProvider[activeProvider.id] ?? [] : [];
-  const currentModel = activeProvider
-    ? state.modelByProvider[activeProvider.id] ?? thread.model ?? ''
-    : '';
-
-  const usageState = activeProvider ? usageOf(state.usage, activeProvider.id) : undefined;
-  const level = usageLevel(usageState);
-  const ratio = usageRatio(usageState);
+    return map;
+  }, [state.modelsByProvider]);
 
   return (
     <div className="app">
-      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
-        <div className="brand">
-          <span className="brand-mark">R</span>
-          <div>
-            <div className="brand-name">Rllama</div>
-            <div className="brand-version">multi-provider workspace</div>
-          </div>
-        </div>
-        <button className="new-chat" onClick={createThread}>
-          <span>New chat</span>
-          <span className="hint">⌘K</span>
-        </button>
-        <div className="thread-list">
-          {state.threads.map((item) => (
-            <div key={item.id} style={{ display: 'flex', gap: 2 }}>
-              <button
-                className={`thread ${item.id === thread?.id ? 'active' : ''}`}
-                onClick={() => {
-                  patchState({ activeThreadId: item.id });
-                  setSidebarOpen(false);
-                }}
-              >
-                {item.title || 'Untitled'}
-              </button>
-              {state.threads.length > 1 ? (
-                <button
-                  className="thread"
-                  style={{ width: 28, flex: '0 0 28px', color: 'var(--text-faint)' }}
-                  title="Delete chat"
-                  onClick={() => deleteThread(item.id)}
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-        <div className="sidebar-footer">
-          <div className="tab-row">
-            <button
-              className={`chip-button ${panel === 'providers' ? 'active' : ''}`}
-              onClick={() => setPanel(panel === 'providers' ? null : 'providers')}
-            >
-              Providers
-            </button>
-            <button
-              className={`chip-button ${panel === 'skills' ? 'active' : ''}`}
-              onClick={() => setPanel(panel === 'skills' ? null : 'skills')}
-            >
-              Skills ({state.skillIds.length})
-            </button>
-            <button
-              className={`chip-button ${panel === 'usage' ? 'active' : ''}`}
-              onClick={() => setPanel(panel === 'usage' ? null : 'usage')}
-            >
-              Usage
-            </button>
-          </div>
-        </div>
-      </aside>
+      <Sidebar
+        threads={state.threads}
+        activeThreadId={thread?.id ?? ''}
+        providerCount={state.providers.length}
+        enabledProviderCount={enabledProviders.length}
+        modelCount={modelCount}
+        activePanel={panel}
+        open={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        onNew={createThread}
+        onSelect={(threadId) => {
+          patchState({ activeThreadId: threadId });
+          setSidebarOpen(false);
+        }}
+        onDelete={deleteThread}
+        onOpenPanel={setPanel}
+      />
 
       <main className="main">
-        <div className="topbar">
-          <button className="button small" onClick={() => setSidebarOpen((value) => !value)} aria-label="Chats">
-            ☰
-          </button>
-          <select
-            value={activeProvider?.id ?? ''}
-            onChange={(event) => patchThread(thread.id, (value) => ({ ...value, providerId: event.target.value }))}
-          >
-            {state.providers.length === 0 ? <option value="">no providers</option> : null}
-            {state.providers.map((provider) => (
-              <option key={provider.id} value={provider.id} disabled={!provider.enabled}>
-                {provider.name}
-                {provider.enabled ? '' : ' (disabled)'}
-              </option>
-            ))}
-          </select>
-          <select
-            value={currentModel}
-            onChange={(event) => (activeProvider ? selectModel(activeProvider.id, event.target.value) : undefined)}
-            disabled={modelChoices.length === 0}
-          >
-            <option value="">
-              {modelChoices.length === 0 ? 'load models…' : 'choose model…'}
-            </option>
-            {modelChoices.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.label}
-              </option>
-            ))}
-          </select>
-          {activeProvider ? (
-            <span className="status-pill">
-              <span className={`dot ${level === 'ok' ? 'ok' : level === 'warn' ? 'warn' : 'danger'}`} />
-              {usageState && usageState.limitTokens
-                ? `${Math.round(ratio * 100)}% of ${formatTokens(usageState.limitTokens)}`
-                : `${formatTokens((usageState?.promptTokens ?? 0) + (usageState?.completionTokens ?? 0))} tokens`}
-            </span>
-          ) : null}
-          <span className="spacer" />
-          {state.failoverEnabled ? <span className="status-pill">failover on</span> : null}
-          <button className="button small" onClick={() => setPanel(panel === 'skills' ? null : 'skills')}>
-            Skills
-          </button>
-          <button className="button small" onClick={() => setPanel(panel === 'providers' ? null : 'providers')}>
-            Providers
-          </button>
-        </div>
+        <TopBar
+          title={thread?.title || 'New chat'}
+          providerName={activeProvider?.name ?? ''}
+          modelLabel={activeModel}
+          usageLabel={usageLabel}
+          usageLevel={level}
+          failover={state.failoverEnabled}
+          pickerOpen={pickerOpen}
+          onTogglePicker={() => setPickerOpen((value) => !value)}
+          onOpenPanel={setPanel}
+          onOpenSidebar={() => setSidebarOpen(true)}
+          picker={
+            <ModelPicker
+              providers={state.providers}
+              modelsByProvider={state.modelsByProvider}
+              status={modelStatus}
+              activeProviderId={activeProvider?.id}
+              activeModel={activeModel}
+              onPick={selectModel}
+              onLoad={fetchModels}
+              onOpenProviders={() => {
+                setPickerOpen(false);
+                setPanel('providers');
+              }}
+              onClose={() => setPickerOpen(false)}
+            />
+          }
+        />
 
-        {notice ? (
-          <div style={{ padding: '8px 14px 0' }}>
-            <div className="banner">
-              {notice}{' '}
-              <button className="button small" style={{ marginLeft: 8 }} onClick={() => setNotice(null)}>
-                dismiss
-              </button>
-            </div>
-          </div>
-        ) : null}
-
-        <div className="messages" ref={scrollRef}>
-          {thread && thread.messages.length === 0 ? (
+        <ThreadView
+          messages={thread?.messages ?? []}
+          busy={busy}
+          onRetry={retry}
+          onSwitchProtocol={(message) => {
+            if (message.providerId) {
+              switchWireApi(message.providerId);
+            }
+          }}
+          emptyState={
             <div className="empty">
               <h1>What are we building?</h1>
               <p>
-                Rllama talks to Ollama Cloud, AgentRouter, OpenRouter, Anthropic, OpenAI, DeepSeek, Kimi, Groq,
+                One workspace for Ollama Cloud, AgentRouter, OpenRouter, Anthropic, OpenAI, DeepSeek, Kimi, Groq,
                 Gemini, local Ollama and any OpenAI/Anthropic-compatible endpoint.
               </p>
-              <ul>
-                <li>Add a provider key in Providers, load its models, pick one.</li>
-                <li>Turn on skills like Caveman (fewer tokens) or REA (reverse engineering).</li>
-                <li>When a provider hits 90% of its budget, the next one takes over.</li>
-              </ul>
-            </div>
-          ) : null}
-
-          {thread?.messages.map((message) => (
-            <div className={`message ${message.role} ${message.error ? 'error' : ''}`} key={message.id}>
-              <div className="avatar">{message.role === 'user' ? 'You' : 'R'}</div>
-              <div className="body">
-                <div className="meta">
-                  <span>{message.role === 'user' ? 'you' : message.answeredBy ?? message.model ?? 'assistant'}</span>
-                  {message.model && message.role === 'assistant' ? <span>{message.model}</span> : null}
-                </div>
-                {message.error ? (
-                  <div className="content">
-                    <p>{message.error}</p>
-                    {message.content ? <Markdown text={message.content} /> : null}
-                  </div>
-                ) : message.content ? (
-                  <div className="content">
-                    <Markdown text={message.content} />
-                  </div>
-                ) : (
-                  <p className="hint">thinking…</p>
-                )}
+              <div className="starter-grid">
+                <button className="starter" onClick={() => setPanel('providers')}>
+                  <strong>Connect a key</strong>
+                  Paste an API key and load the models it can use.
+                </button>
+                <button className="starter" onClick={() => setPanel('catalog')}>
+                  <strong>Browse Ollama models</strong>
+                  Pull a model into your local daemon, or add a cloud one.
+                </button>
+                <button className="starter" onClick={() => toggleSkill('caveman')}>
+                  <strong>Caveman mode</strong>
+                  Same facts, far fewer tokens.
+                </button>
+                <button className="starter" onClick={() => setPanel('skills')}>
+                  <strong>Skills</strong>
+                  REA, OpenRouter routing, planner, reviewer, debugger.
+                </button>
               </div>
             </div>
-          ))}
-        </div>
+          }
+        />
 
-        <div className="composer">
-          <div className="composer-inner">
-            <textarea
-              value={draft}
-              placeholder="Message Rllama…  (Enter to send, Shift+Enter for a new line)"
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={onKeyDown}
-            />
-            <div className="composer-actions">
-              {busy ? (
-                <button className="button" onClick={stop}>
-                  Stop
-                </button>
-              ) : (
-                <button className="button primary" onClick={() => void send()} disabled={!draft.trim()}>
-                  Send
-                </button>
-              )}
-              <span className="hint">
-                {state.skillIds.length > 0
-                  ? `skills: ${state.skillIds
-                      .map((id) => skills.find((skill) => skill.id === id)?.name ?? id)
-                      .join(', ')}`
-                  : 'no skills on'}
-              </span>
-            </div>
-          </div>
-        </div>
+        <Composer
+          value={draft}
+          busy={busy}
+          skills={skills}
+          enabledSkillIds={state.skillIds}
+          modelLabel={activeModel ? `${activeProvider?.name ?? ''} · ${activeModel}` : ''}
+          notice={notice}
+          commands={commands}
+          onChange={setDraft}
+          onSend={() => void send()}
+          onStop={stop}
+          onToggleSkill={toggleSkill}
+          onOpenPicker={() => setPickerOpen(true)}
+          onDismissNotice={() => setNotice(null)}
+        />
       </main>
 
       {panel === 'providers' ? (
-        <ProvidersPanel
-          providers={state.providers}
-          usage={state.usage}
-          modelsByProvider={modelsByProvider}
-          modelStatus={modelStatus}
-          onChange={(providers) =>
-            setState((previous) => ({
-              ...previous,
-              providers,
-              usage: pruneUsage(previous.usage, providers),
-            }))
-          }
-          onFetchModels={fetchModels}
-          onSelectModel={selectModel}
-          selectedModels={state.modelByProvider}
-        />
+        <Drawer
+          title="Providers"
+          subtitle="Keys, wire APIs and the models each key can see"
+          onClose={() => setPanel(null)}
+        >
+          <ProvidersPanel
+            providers={state.providers}
+            modelsByProvider={state.modelsByProvider}
+            modelStatus={modelStatus}
+            selectedModels={state.modelByProvider}
+            testStatus={testStatus}
+            onChange={(providers) =>
+              setState((previous) => ({
+                ...previous,
+                providers,
+                usage: pruneUsage(previous.usage, providers),
+              }))
+            }
+            onFetchModels={fetchModels}
+            onTest={testProvider}
+            onSelectModel={selectModel}
+          />
+        </Drawer>
       ) : null}
 
       {panel === 'skills' ? (
-        <SkillsPanel
-          skills={skills}
-          enabledIds={state.skillIds}
-          systemPrompt={state.systemPrompt}
-          onToggle={toggleSkill}
-          onAdd={(skill) =>
-            setState((previous) => ({
-              ...previous,
-              customSkills: [...previous.customSkills, skill],
-              skillIds: [...previous.skillIds, skill.id],
-            }))
-          }
-          onRemove={(skillId) =>
-            setState((previous) => ({
-              ...previous,
-              customSkills: previous.customSkills.filter((skill) => skill.id !== skillId),
-              skillIds: previous.skillIds.filter((id) => id !== skillId),
-            }))
-          }
-          onSystemPromptChange={(systemPrompt) => patchState({ systemPrompt })}
-        />
+        <Drawer
+          title="Skills"
+          subtitle={`${PINNED_SKILLS.length} pre-installed · ${state.skillIds.length} enabled`}
+          onClose={() => setPanel(null)}
+        >
+          <SkillsPanel
+            skills={skills}
+            enabledIds={state.skillIds}
+            systemPrompt={state.systemPrompt}
+            onToggle={toggleSkill}
+            onAdd={(skill) =>
+              setState((previous) => ({
+                ...previous,
+                customSkills: [...previous.customSkills, skill],
+                skillIds: [...previous.skillIds, skill.id],
+              }))
+            }
+            onRemove={(skillId) =>
+              setState((previous) => ({
+                ...previous,
+                customSkills: previous.customSkills.filter((skill) => skill.id !== skillId),
+                skillIds: previous.skillIds.filter((id) => id !== skillId),
+              }))
+            }
+            onSystemPromptChange={(systemPrompt) => patchState({ systemPrompt })}
+          />
+        </Drawer>
+      ) : null}
+
+      {panel === 'catalog' ? (
+        <Drawer
+          title="Models"
+          subtitle="Ollama catalog — pull locally or point the chat at a cloud model"
+          wide
+          onClose={() => setPanel(null)}
+        >
+          <CatalogPanel
+            providers={state.providers}
+            installed={installedByProvider}
+            pullState={pullState}
+            onPull={startPull}
+            onUse={(providerId, model) => {
+              selectModel(providerId, model);
+              setNotice(`${model} is selected for ${state.providers.find((item) => item.id === providerId)?.name}.`);
+              setPanel(null);
+            }}
+            onOpenProviders={() => setPanel('providers')}
+          />
+        </Drawer>
       ) : null}
 
       {panel === 'usage' ? (
-        <UsagePanel
-          providers={state.providers}
-          usage={state.usage}
-          failoverEnabled={state.failoverEnabled}
-          onToggleFailover={(failoverEnabled) => patchState({ failoverEnabled })}
-          onSetLimit={(providerId, limit) =>
-            setState((previous) => ({ ...previous, usage: setLimit(previous.usage, providerId, limit) }))
-          }
-          onReset={(providerId) =>
-            setState((previous) => ({ ...previous, usage: resetWindow(previous.usage, providerId) }))
-          }
-        />
+        <Drawer title="Usage" subtitle="Budgets and automatic failover" onClose={() => setPanel(null)}>
+          <UsagePanel
+            providers={state.providers}
+            usage={state.usage}
+            failoverEnabled={state.failoverEnabled}
+            onToggleFailover={(failoverEnabled) => patchState({ failoverEnabled })}
+            onSetLimit={(providerId, limit) =>
+              setState((previous) => ({ ...previous, usage: setLimit(previous.usage, providerId, limit) }))
+            }
+            onReset={(providerId) =>
+              setState((previous) => ({ ...previous, usage: resetWindow(previous.usage, providerId) }))
+            }
+          />
+        </Drawer>
       ) : null}
     </div>
   );
 }
-
-/** Exported for tests that want the same wiring without rendering. */
-export type { UsageMap };

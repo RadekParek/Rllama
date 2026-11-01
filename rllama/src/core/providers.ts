@@ -31,14 +31,24 @@ export const TEMPLATES: ProviderTemplate[] = [
   {
     id: 'agentrouter',
     name: 'AgentRouter',
-    protocol: 'openai',
+    protocol: 'openai-responses',
     baseUrl: 'https://agentrouter.org/v1',
     keyUrl: 'https://agentrouter.org/console/token',
     requiresKey: true,
-    hint: 'OpenAI mode uses https://agentrouter.org/v1; switch protocol to Anthropic for https://agentrouter.org (no /v1).',
+    hint: 'Codex reaches AgentRouter with wire_api = "responses" on https://agentrouter.org/v1 — that is the default here. Load models to see what your key exposes.',
     alternates: [
+      { protocol: 'openai', baseUrl: 'https://agentrouter.org/v1', label: 'Chat Completions (/chat/completions)' },
       { protocol: 'anthropic', baseUrl: 'https://agentrouter.org', label: 'Anthropic protocol (no /v1)' },
     ],
+  },
+  {
+    id: 'agentrouter-anthropic',
+    name: 'AgentRouter (Anthropic wire)',
+    protocol: 'anthropic',
+    baseUrl: 'https://agentrouter.org',
+    keyUrl: 'https://agentrouter.org/console/token',
+    requiresKey: true,
+    hint: 'Same key, Anthropic wire protocol: the app appends /v1/messages to https://agentrouter.org.',
   },
   {
     id: 'openrouter',
@@ -149,6 +159,8 @@ export function chatEndpoint(protocol: Protocol, baseUrl: string): string {
   switch (protocol) {
     case 'openai':
       return joinUrl(baseUrl, '/chat/completions');
+    case 'openai-responses':
+      return joinUrl(baseUrl, '/responses');
     case 'anthropic':
       return joinUrl(baseUrl, '/v1/messages');
     case 'ollama':
@@ -159,6 +171,7 @@ export function chatEndpoint(protocol: Protocol, baseUrl: string): string {
 export function modelsEndpoint(protocol: Protocol, baseUrl: string): string {
   switch (protocol) {
     case 'openai':
+    case 'openai-responses':
       return joinUrl(baseUrl, '/models');
     case 'anthropic':
       return joinUrl(baseUrl, '/v1/models');

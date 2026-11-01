@@ -35,14 +35,21 @@ describe('endpoint building', () => {
 });
 
 describe('agentrouter template', () => {
-  it('ships both wire protocols with the right bases', () => {
+  it('defaults to the Responses wire API Codex uses', () => {
     const template = templateById('agentrouter');
     expect(template).toBeDefined();
     expect(template?.baseUrl).toBe('https://agentrouter.org/v1');
-    expect(template?.alternates?.[0]).toMatchObject({
-      protocol: 'anthropic',
-      baseUrl: 'https://agentrouter.org',
-    });
+    expect(template?.protocol).toBe('openai-responses');
+    expect(chatEndpoint(template!.protocol, template!.baseUrl)).toBe('https://agentrouter.org/v1/responses');
+  });
+
+  it('offers chat-completions and anthropic as alternates', () => {
+    const template = templateById('agentrouter');
+    const protocols = (template?.alternates ?? []).map((alternate) => alternate.protocol);
+    expect(protocols).toContain('openai');
+    expect(protocols).toContain('anthropic');
+    const anthropic = template?.alternates?.find((alternate) => alternate.protocol === 'anthropic');
+    expect(anthropic?.baseUrl).toBe('https://agentrouter.org');
   });
 });
 
@@ -102,5 +109,29 @@ describe('templates', () => {
     for (const template of TEMPLATES) {
       expect(template.baseUrl.endsWith('/')).toBe(false);
     }
+  });
+});
+
+describe('responses wire api', () => {
+  it('posts to /responses and lists models from /models', () => {
+    expect(chatEndpoint('openai-responses', 'https://agentrouter.org/v1')).toBe(
+      'https://agentrouter.org/v1/responses',
+    );
+    expect(modelsEndpoint('openai-responses', 'https://agentrouter.org/v1')).toBe(
+      'https://agentrouter.org/v1/models',
+    );
+  });
+
+  it('authenticates with a bearer token', () => {
+    const headers = authHeaders({ protocol: 'openai-responses', apiKey: 'sk-r' });
+    expect(headers.Authorization).toBe('Bearer sk-r');
+    expect(headers['Content-Type']).toBe('application/json');
+  });
+
+  it('reads the data[].id list', () => {
+    expect(parseModelList('openai-responses', { data: [{ id: 'gpt-x' }, { id: 'gpt-y' }] })).toEqual([
+      'gpt-x',
+      'gpt-y',
+    ]);
   });
 });
