@@ -1,0 +1,64 @@
+name: rllama
+
+# Builds and tests the Rllama app (rllama/): typecheck, unit tests and the
+# production bundle. Packaging for desktop (Electron/Tauri) and Android is a
+# separate step that will be added once the app shell lands.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'rllama/**'
+      - '.github/workflows/rllama.yaml'
+  pull_request:
+    paths:
+      - 'rllama/**'
+      - '.github/workflows/rllama.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: typecheck, test, bundle
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rllama
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: rllama/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Bundle size
+        shell: bash
+        run: |
+          set -euo pipefail
+          total="$(du -sb dist | cut -f1)"
+          js="$(find dist/assets -name '*.js' -printf '%s\n' | awk '{s+=$1} END {print s+0}')"
+          echo "dist total: ${total} bytes; js: ${js} bytes"
+          echo "::notice title=Rllama bundle::dist=${total} bytes js=${js} bytes"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rllama-web
+          path: rllama/dist
+          if-no-files-found: error
+          retention-days: 14
