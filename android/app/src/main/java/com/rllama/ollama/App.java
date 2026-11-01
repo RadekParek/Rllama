@@ -19,6 +19,15 @@ public class App extends Application {
         Prefs prefs = new Prefs(this);
         NativePayload.mkdirs(prefs.modelDir());
         NativePayload.mkdirs(prefs.workDir());
+
+        // Resolve (and if needed copy) the native payload off the main thread so
+        // the first terminal command or server start is instant.
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                NativePayload.payloadDir(App.this);
+            }
+        }, "payload-resolve").start();
     }
 
     private void createChannels() {

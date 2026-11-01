@@ -136,7 +136,7 @@ public class OllamaService extends Service {
                 break;
         }
 
-        Intent openIntent = new Intent(this, MainActivity.class);
+        Intent openIntent = new Intent(this, TerminalActivity.class);
         openIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent contentIntent = PendingIntent.getActivity(
                 this, 0, openIntent, pendingIntentFlags());
