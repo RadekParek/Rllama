@@ -145,6 +145,7 @@
               "/linux",
               "/macos",
               "/windows",
+              "/android",
               "/docker",
               "/import",
               "/faq",

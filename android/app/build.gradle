@@ -1,0 +1,73 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Version information is injected by scripts/build_android.sh / CI. When it is
+// missing (plain local build) fall back to a readable placeholder.
+def ollamaVersion = System.getenv('OLLAMA_VERSION') ?: '0.0.0-android'
+def ollamaVersionCode = (System.getenv('OLLAMA_VERSION_CODE') ?: '1') as Integer
+
+def keystoreFile = System.getenv('ANDROID_KEYSTORE_FILE')
+
+android {
+    namespace 'com.rllama.ollama'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'com.rllama.ollama'
+        minSdk 26
+        targetSdk 35
+        versionCode ollamaVersionCode
+        versionName ollamaVersion
+
+        // The bundled payload is built by scripts/build_android.sh. Keep the
+        // filter in sync with the ABIs staged under src/main/jniLibs.
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    signingConfigs {
+        if (keystoreFile) {
+            release {
+                storeFile file(keystoreFile)
+                storePassword System.getenv('ANDROID_KEYSTORE_PASSWORD')
+                keyAlias System.getenv('ANDROID_KEY_ALIAS')
+                keyPassword System.getenv('ANDROID_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            if (keystoreFile) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // Ollama executes its binaries from the app's native library directory, so
+    // the .so files must be extracted on install instead of memory mapped from
+    // the APK (the modern default).
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'com.google.android.material:material:1.12.0'
+}

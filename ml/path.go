@@ -6,11 +6,18 @@ import (
 	"runtime"
 )
 
+// LibOllamaPathEnv points Ollama at the directory that holds the bundled
+// llama.cpp payload. It is an escape hatch for hosts that cannot follow any of
+// the standard install layouts, for example Android apps where the payload is
+// extracted next to the executable inside the app's native library directory.
+const LibOllamaPathEnv = "OLLAMA_LIBRARY_PATH"
+
 type libOllamaPathSearch struct {
 	executable string
 	workingDir string
 	goos       string
 	goarch     string
+	envPath    string
 }
 
 // LibOllamaPath is the root used to find bundled llama.cpp and MLX runtime
@@ -35,6 +42,7 @@ var LibOllamaPath = func() string {
 		workingDir: cwd,
 		goos:       runtime.GOOS,
 		goarch:     runtime.GOARCH,
+		envPath:    os.Getenv(LibOllamaPathEnv),
 	})
 }()
 
@@ -75,9 +83,20 @@ func libOllamaPathCandidates(search libOllamaPathSearch) []string {
 		}
 	}
 
+	// An explicit override wins over every inferred layout so that hosts with a
+	// non-standard payload location (Android apps, custom launchers) still find
+	// llama-server and its backend libraries.
+	add(search.envPath)
+
 	if search.executable != "" {
 		exeDir := filepath.Dir(search.executable)
 		switch goos {
+		case "android":
+			// Android apps can only execute binaries that live in the app's
+			// native library directory, so ollama and llama-server are
+			// installed side by side there.
+			add(exeDir)
+			add(filepath.Join(exeDir, "lib", "ollama"))
 		case "darwin":
 			// Local dist output and standard installs keep helpers under lib/ollama.
 			add(filepath.Join(exeDir, "lib", "ollama"))
