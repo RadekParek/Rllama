@@ -133,6 +133,29 @@ html.native .app {
 
 /* --------------------------------------------------------------------- menu */
 
+.menu-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 2px 12px;
+}
+
+.menu-brand img {
+  border-radius: 9px;
+  display: block;
+}
+
+.brand-name {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.brand-sub {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
 .menu-primary {
   display: flex;
   align-items: center;
@@ -1389,4 +1412,40 @@ select.field {
   .starter-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ------------------------------------------------------------- brand marks */
+
+.model-logo {
+  flex: 0 0 auto;
+  display: block;
+  overflow: visible;
+}
+
+.model-logo-fallback {
+  flex: 0 0 auto;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 5px;
+  background: var(--panel-hover);
+  color: var(--text-dim);
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.model-pill .model-logo,
+.model-pill .model-logo-fallback {
+  margin-right: 2px;
+}
+
+/* Composer row is deliberately sparse: model, effort, mode, send. */
+.composer-row {
+  gap: 6px;
+}
+
+.composer-hint {
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
 }

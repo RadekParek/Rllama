@@ -171,13 +171,19 @@ function CatalogRow(props: {
         {model.context ? <span className="badge">{model.context}</span> : null}
         {props.installed ? <span className="badge ok">installed</span> : null}
         <span className="spacer" />
-        <button className="btn ghost tiny" onClick={props.onUse} disabled={!props.canPull}>
-          Use
+        <button className="btn tiny" onClick={props.onUse}>
+          {model.cloud ? 'Add to cloud' : 'Use'}
         </button>
-        <button className="btn tiny" onClick={props.onPull} disabled={!props.canPull || Boolean(pull && !pull.error)}>
-          <IconDownload width={12} height={12} />
-          {model.cloud ? 'Add' : 'Pull'}
-        </button>
+        {model.cloud ? null : (
+          <button
+            className="btn tiny"
+            onClick={props.onPull}
+            disabled={!props.canPull || Boolean(pull && !pull.error)}
+          >
+            <IconDownload width={12} height={12} />
+            Pull
+          </button>
+        )}
       </div>
       <div className="catalog-desc">{model.description}</div>
       <div className="chip-row">

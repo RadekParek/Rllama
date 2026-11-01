@@ -24,6 +24,7 @@ export type PanelId =
   | 'settings'
   | 'mcp'
   | 'cli'
+  | 'local'
   | null;
 
 /* ------------------------------------------------------------------ top bar */
@@ -75,10 +76,6 @@ export function TopBar(props: TopBarProps): React.ReactElement {
 
       <span className="spacer" />
 
-      <span className="pill hide-small" title="Tokens used with this provider">
-        <span className={`dot ${props.usageLevel}`} />
-        <span className="pill-label">{props.usageLabel}</span>
-      </span>
       <button className="icon-button" onClick={() => props.onOpenPanel('settings')} title="Settings" aria-label="Settings">
         <IconSliders />
       </button>
@@ -220,6 +217,7 @@ export interface ThreadViewProps {
   showLogos: boolean;
   onRetry?: (message: Message) => void;
   onSwitchProtocol?: (message: Message) => void;
+  onFixConnection?: () => void;
 }
 
 export function ThreadView(props: ThreadViewProps): React.ReactElement {
@@ -279,6 +277,11 @@ export function ThreadView(props: ThreadViewProps): React.ReactElement {
                         Switch wire API
                       </button>
                     ) : null}
+                    {props.onFixConnection && /daemon|127\.0\.0\.1|localhost|Network error/i.test(message.error) ? (
+                      <button className="btn tiny" onClick={props.onFixConnection}>
+                        Fix connection
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ) : message.content ? (
@@ -314,6 +317,7 @@ export interface ComposerProps {
   enabledSkillIds: string[];
   modelLabel: string;
   effort: Effort;
+  agentMode: boolean;
   parallelCount: number;
   notice: string | null;
   commands: SlashCommand[];
@@ -321,6 +325,7 @@ export interface ComposerProps {
   onSend: () => void;
   onStop: () => void;
   onToggleSkill: (skillId: string) => void;
+  onToggleAgentMode: () => void;
   onOpenPicker: () => void;
   onCycleEffort: () => void;
   onDismissNotice: () => void;
@@ -417,8 +422,8 @@ export function Composer(props: ComposerProps): React.ReactElement {
         />
 
         <div className="composer-row">
-          <button className="pill" onClick={props.onOpenPicker} title="Choose provider and model">
-            <span className="dot ok" />
+          <button className="pill model-pill" onClick={props.onOpenPicker} title="Choose provider and model">
+            {props.modelLabel ? <ModelLogo model={props.modelLabel.split(' · ').pop() ?? ''} size={13} /> : <span className="dot ok" />}
             <span className="pill-label">{props.modelLabel || 'no model'}</span>
             {props.parallelCount > 0 ? <span className="badge accent">+{props.parallelCount}</span> : null}
             <IconChevron width={11} height={11} />
@@ -428,22 +433,20 @@ export function Composer(props: ComposerProps): React.ReactElement {
             {EFFORT_LABELS[props.effort]} effort
           </button>
 
-          {props.skills
-            .filter((skill) => ['caveman', 'rea', 'openrouter'].includes(skill.id))
-            .map((skill) => {
-              const on = props.enabledSkillIds.includes(skill.id);
-              return (
-                <button
-                  key={skill.id}
-                  className={`pill skill-pill ${on ? 'on' : ''}`}
-                  onClick={() => props.onToggleSkill(skill.id)}
-                  title={skill.description}
-                >
-                  <IconBolt width={11} height={11} />
-                  <span className="pill-label">{skill.name.replace(/ —.*$/, '')}</span>
-                </button>
-              );
-            })}
+          <button
+            className={`pill ${props.agentMode ? 'on' : ''}`}
+            onClick={props.onToggleAgentMode}
+            title="Agent mode: plan, act, verify"
+          >
+            <IconBolt width={11} height={11} />
+            <span className="pill-label">{props.agentMode ? 'Agent' : 'Chat'}</span>
+          </button>
+
+          {props.enabledSkillIds.length > 0 ? (
+            <span className="composer-hint" title="Skills in use">
+              {props.enabledSkillIds.length} skill{props.enabledSkillIds.length === 1 ? '' : 's'}
+            </span>
+          ) : null}
 
           <span className="spacer" />
 

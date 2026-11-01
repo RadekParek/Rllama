@@ -51,7 +51,7 @@ export function SettingsPanel(props: SettingsPanelProps): React.ReactElement {
       >
         {CONTEXT_PRESETS.map((preset) => (
           <option key={preset} value={preset}>
-            {preset >= 1000 ? `${Math.round(preset / 1000)}K tokens` : `${preset} tokens`}
+            {preset >= 1_000_000 ? `${preset / 1_000_000}M tokens` : `${Math.round(preset / 1000)}K tokens`}
           </option>
         ))}
       </select>

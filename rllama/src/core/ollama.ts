@@ -73,6 +73,16 @@ export async function pullModel(
   }
   if (!response.ok) {
     const text = await response.text().catch(() => '');
+    const looksHtml = /^\s*(<!doctype html|<html)/i.test(text.slice(0, 200));
+    if (looksHtml) {
+      const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(text)?.[1]?.trim() ?? 'no title';
+      throw new Error(
+        `Pulling “${model}” was blocked (HTTP ${response.status} — ${title}). ` +
+          'The daemon returned a web page instead of a pull stream, which happens when the model is cloud-only ' +
+          '(it runs on ollama.com and is never downloaded) or when a proxy sits in front of the daemon. ' +
+          'Cloud models belong on an Ollama Cloud provider; local pulls should hit the daemon directly at /api/pull.',
+      );
+    }
     throw new Error(`ollama pull failed (HTTP ${response.status}): ${text.slice(0, 300)}`);
   }
   if (!response.body) {

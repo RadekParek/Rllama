@@ -2,6 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import App from '../../App';
+import { initialState } from '../store';
 
 /**
  * Smoke test for the shell.
@@ -18,15 +19,14 @@ describe('app shell', () => {
     expect(html).toContain('Ask anything');
     expect(html).toContain('Pick a model');
     expect(html).toContain('Medium effort');
+    expect(html).toContain('Agent');
   });
 
   it('ships the three skill packs enabled', () => {
+    // The composer keeps the row sparse and only reports the count.
     const html = renderToStaticMarkup(React.createElement(App));
-    for (const skill of ['Caveman', 'REA', 'OpenRouter']) {
-      expect(html).toContain(skill);
-    }
-    // Enabled chips carry the `on` class.
-    expect(html).toMatch(/class="pill skill-pill on"/);
+    expect(html).toContain('3 skills');
+    expect(initialState().skillIds).toEqual(['caveman', 'rea', 'openrouter']);
   });
 
   it('starts on the seeded local model', () => {
