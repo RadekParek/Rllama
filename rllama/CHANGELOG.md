@@ -5,6 +5,58 @@ Plain-language record of every change, newest first. "Added" = new capability,
 
 ---
 
+## 2026-11-01 — session 6: working local daemon, six effort levels, tighter UI
+
+### Added
+
+- **Daemon discovery.** `src/core/ollama.ts` now probes `/api/version` on the
+  configured address plus `127.0.0.1:11434`, `localhost:11434`, the emulator host
+  `10.0.2.2:11434` and `[::1]:11434`, in parallel and with a short deadline, and
+  reports the reachable ones first. The app uses this in three places: on first
+  paint, before every local request, and behind a new **Find daemon** button in
+  Local backend that lists what answered and switches to it on tap.
+- **Self-healing connection.** A local request or pull that fails is retried once
+  on the address discovery finds, and the provider is updated, so the old
+  `Cannot reach an Ollama daemon at 127.0.0.1:11434` dead end is gone: the app
+  either reconnects or tells you no daemon is running.
+- **Six effort levels** — Minimal, Low, Medium, High, Max, Ultracode — each with a
+  colour (blue → green → amber → orange → red) and an animated blue/purple
+  gradient for Ultracode.
+- **Effort menu in the composer**: tap the effort pill to pick a level; each row
+  carries a one-line explanation. Settings shows the same six as colour-coded
+  cards. Ultracode additionally injects a verify-every-step system directive and
+  raises the reply budget to at least 8192 tokens.
+
+### Changed
+
+- **Model names drop the registry namespace everywhere**: `treyleo16/Opus-5.5`
+  reads `Opus-5.5` in the top bar, the composer, the picker, the thread meta and
+  the pull notices. The full id stays in the tooltip. Tags are kept, because
+  `gemma4:31b-cloud` and `gemma4:12b` are different models.
+- **The model picker closes the moment you pick a model** (previously it stayed
+  open behind the new selection).
+- Top bar is now menu, model, conversation title, settings — no effort or usage
+  pill competing for space.
+- Tighter reading column (720 px), monospace model ids, calmer hover states,
+  smaller empty-state heading, phone-width guards for the effort menu.
+- Effort is no longer cycled with a click; it is chosen from a menu.
+- Local daemon errors are short ("No Ollama daemon answered at …") with a fix
+  that points at Find daemon instead of asking for a LAN address.
+
+### Removed
+
+- The `EFFORT_LABELS`-only three-level control and the top-bar effort/usage
+  pills.
+
+### Tests
+
+- New `src/core/__tests__/effort.test.ts` pins the level order and wire mapping
+  (`reasoning.effort`, `reasoning_effort`, Ollama `think`), the token budget
+  rule, namespace stripping, and daemon probe/discovery behaviour including a
+  refused connection. Suite: **71/71**.
+
+---
+
 ## 2026-11-01 — session 5: owner's icon, real brand logos, slimmer UI
 
 ### Added

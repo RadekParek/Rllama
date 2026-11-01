@@ -54,6 +54,16 @@ signup. The 90 % behaviour is a provider switch, not a quota reset.
   from the composer, the Skills drawer, or `/caveman` style commands.
 - **Usage ledger with automatic failover**: warns at 75% of a budget and
   continues on the next provider at 90%, or immediately on 401/402/429/5xx.
+- **Effort, six levels**: Minimal, Low, Medium, High, Max and Ultracode, chosen
+  from the composer and colour-coded (blue → green → amber → orange → red, with
+  an animated gradient for Ultracode). Each level maps onto the provider's own
+  controls: `reasoning_effort`, `reasoning: {effort}`, or Ollama's `think` flag.
+  Ultracode adds a verify-every-step directive and a larger reply budget.
+- **Local Ollama that finds itself**: on start and before every local request the
+  app probes the configured address plus the loopback forms (`127.0.0.1`,
+  `localhost`, `10.0.2.2`, `[::1]`) and moves to whichever daemon answers, so a
+  stale address no longer strands the app. **Local backend → Find daemon** shows
+  every address it tried and switches on tap.
 
 ## Build and run
 

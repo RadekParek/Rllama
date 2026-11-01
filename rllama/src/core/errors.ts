@@ -81,9 +81,9 @@ export function advise(input: AdviceInput): ErrorAdvice {
     if (localHost) {
       return {
         kind: 'local-daemon',
-        summary: `Cannot reach an Ollama daemon at ${host}.`,
+        summary: `No Ollama daemon answered at ${host}.`,
         fix:
-          'Start it with `ollama serve` on the machine that runs Ollama. On a phone, 127.0.0.1 is the phone itself — enter your computer\'s LAN address instead (for example http://192.168.1.20:11434) and make sure the daemon listens on 0.0.0.0.',
+          'Rllama checks the usual addresses automatically. Start Ollama (`ollama serve`; in Termux `pkg install ollama && ollama serve &`), then open Local backend → Find daemon and it will reconnect.',
         failover: true,
       };
     }

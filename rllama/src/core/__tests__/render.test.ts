@@ -18,7 +18,7 @@ describe('app shell', () => {
     expect(html).toContain('New chat');
     expect(html).toContain('Ask anything');
     expect(html).toContain('Pick a model');
-    expect(html).toContain('Medium effort');
+    expect(html).toContain('Medium');
     expect(html).toContain('Agent');
   });
 
@@ -29,8 +29,10 @@ describe('app shell', () => {
     expect(initialState().skillIds).toEqual(['caveman', 'rea', 'openrouter']);
   });
 
-  it('starts on the seeded local model', () => {
+  it('shows the short model name, not the registry namespace', () => {
     const html = renderToStaticMarkup(React.createElement(App));
-    expect(html).toContain('treyleo16/claude-oss');
+    // Visible labels use the short name; the full id stays in the tooltip.
+    expect(html).toContain('>claude-oss<');
+    expect(html).not.toContain('>treyleo16/claude-oss<');
   });
 });

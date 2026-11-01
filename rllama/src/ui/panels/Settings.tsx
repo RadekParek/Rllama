@@ -1,6 +1,6 @@
 import React from 'react';
-import { CONTEXT_PRESETS, EFFORT_LABELS } from '../../core/settings';
-import type { Effort, Settings } from '../../core/types';
+import { CONTEXT_PRESETS, EFFORT_META, EFFORT_ORDER } from '../../core/settings';
+import type { Settings } from '../../core/types';
 
 export interface SettingsPanelProps {
   settings: Settings;
@@ -21,21 +21,23 @@ export function SettingsPanel(props: SettingsPanelProps): React.ReactElement {
       <div className="section-label" style={{ padding: '2px 0 0' }}>
         Effort
       </div>
-      <div className="segmented" role="group" aria-label="Reasoning effort">
-        {(['low', 'medium', 'high'] as Effort[]).map((effort) => (
-          <button
-            key={effort}
-            className={`segment ${settings.effort === effort ? 'on' : ''}`}
-            onClick={() => props.onChange({ effort })}
-          >
-            {EFFORT_LABELS[effort]}
-          </button>
-        ))}
+      <div className="effort-grid" role="group" aria-label="Reasoning effort">
+        {EFFORT_ORDER.map((effort) => {
+          const meta = EFFORT_META[effort];
+          return (
+            <button
+              key={effort}
+              className={`effort-card ${settings.effort === effort ? 'on' : ''}`}
+              data-effort={effort}
+              onClick={() => props.onChange({ effort })}
+            >
+              <span className="effort-dot" style={{ background: meta.color }} />
+              <span>{meta.label}</span>
+            </button>
+          );
+        })}
       </div>
-      <div className="hint">
-        Low keeps answers short and cheap, high sends the provider's reasoning controls (and Ollama&apos;s
-        <code> think</code> flag). Same idea as Codex&apos;s effort setting.
-      </div>
+      <div className="hint">{EFFORT_META[settings.effort].description}</div>
 
       <div className="section-label" style={{ padding: '8px 0 0' }}>
         Context
