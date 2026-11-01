@@ -6,8 +6,9 @@ import android.app.NotificationManager;
 import android.os.Build;
 
 /**
- * Creates the long lived notification channel used by {@link OllamaService}
- * and makes sure the working directories exist before anything else runs.
+ * Creates the notification channel and the writable directories the Ollama
+ * binary needs. Nothing else happens here; the app is a thin host for the
+ * bundled binary.
  */
 public class App extends Application {
     public static final String CHANNEL_SERVER = "ollama_server";
@@ -15,22 +16,12 @@ public class App extends Application {
     @Override
     public void onCreate() {
         super.onCreate();
-        createChannels();
-        Prefs prefs = new Prefs(this);
-        NativePayload.mkdirs(prefs.modelDir());
-        NativePayload.mkdirs(prefs.workDir());
-
-        // Resolve (and if needed copy) the native payload off the main thread so
-        // the first terminal command or server start is instant.
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                NativePayload.payloadDir(App.this);
-            }
-        }, "payload-resolve").start();
+        NativePayload.mkdirs(NativePayload.homeDir(this));
+        NativePayload.mkdirs(NativePayload.modelsDir(this));
+        createChannel();
     }
 
-    private void createChannels() {
+    private void createChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             return;
         }

@@ -353,6 +353,28 @@ jobs:
           cp "$apk" "dist/rllama-ollama-${version}-android-arm64.apk"
           ls -l dist
 
+      # Audit trail: what is actually inside the single APK, in bytes, so the
+      # payload size can be compared with the desktop bundles without guessing.
+      - name: Report APK contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(ls dist/*.apk | head -1)"
+          total="$(stat -c%s "$apk")"
+          echo "### $apk" >>"$GITHUB_STEP_SUMMARY"
+          echo "| entry | bytes |" >>"$GITHUB_STEP_SUMMARY"
+          echo "| --- | --- |" >>"$GITHUB_STEP_SUMMARY"
+          unzip -v "$apk" | awk 'NR>3 && NF>=8 {print $1, $8}' | sort -rn | head -12 \
+            | while read -r bytes name; do echo "| \`$name\` | $bytes |" >>"$GITHUB_STEP_SUMMARY"; done
+          echo "| **apk total** | **$total** |" >>"$GITHUB_STEP_SUMMARY"
+
+          ollama="$(unzip -v "$apk" | awk '{print $1, $8}' | grep ' lib/arm64-v8a/libollama.so$' | awk '{print $1}')"
+          llama="$(unzip -v "$apk" | awk '{print $1, $8}' | grep ' lib/arm64-v8a/libllama-server.so$' | awk '{print $1}')"
+          echo "::notice title=APK size::total=${total} bytes ollama=${ollama:-0} llama-server=${llama:-0}"
+          echo "::notice title=APK top entries::$(unzip -v "$apk" | awk 'NR>3 && NF>=8 {print $1 " " $8}' | sort -rn | head -6 | tr '\n' '|')"
+          echo "::notice title=APK ABIs::$(unzip -l "$apk" | awk '{print $4}' | grep '^lib/' | cut -d/ -f2 | sort -u | tr '\n' ' ')"
+          echo "APK total: $total bytes; ollama: ${ollama:-0}; llama-server: ${llama:-0}"
+
       - uses: actions/upload-artifact@v4
         with:
           name: ollama-android-apk
