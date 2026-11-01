@@ -5,6 +5,57 @@ Plain-language record of every change, newest first. "Added" = new capability,
 
 ---
 
+## 2026-11-01 — session 4: phone layout, menu, logos, effort, parallel models
+
+### Added
+
+- **Left menu** (top-left button): New chat, Sessions, Skills, MCP servers, API
+  providers, My models, Terminal CLI, Settings — the same list on phone and
+  desktop.
+- **Settings drawer**: effort (low/medium/high), history window
+  (8K–128K tokens, oldest turns trimmed before sending), max reply, temperature,
+  agent mode, failover, model logos, reset usage, clear model cache.
+- **Effort control** in the top bar and composer, mapped per wire API:
+  `reasoning_effort` (chat completions), `reasoning: {effort}` (responses),
+  `think: true` (Ollama native, high only).
+- **Parallel models**: the `+` on any model adds it to the run; one send now
+  produces one answer per model, streamed concurrently, each with its own
+  message, provider and model.
+- **Vendor marks** next to model names (Anthropic, OpenAI, DeepSeek, Moonshot,
+  Google, Alibaba, Meta, Mistral, xAI, Z.ai, Microsoft, NVIDIA, MiniMax,
+  community) — simple geometric glyphs in each brand's colour, not copied
+  artwork.
+- **Actionable errors** (`core/errors.ts`): HTML/WAF pages detected and quoted as
+  text instead of raw `<!doctype html>`, 403 split into "key rejected" vs
+  "gateway blocked", local-daemon failures explain that `127.0.0.1` on a phone is
+  the phone itself, 400/422 point at the model id or the wire API. Every error
+  carries a `fix` line and a failover verdict.
+- **Default models**: `treyleo16/claude-oss` (local, 1B) is selected on first
+  launch; Ollama Cloud ships with `gemma4:31b-cloud`, `deepseek-v4.1-flash`,
+  `glm-5.3`, `muse-spark-open` and `treyleo16/claude-mythos-5-1` in its list.
+- **Agent mode on by default**: a plan → act → verify preamble sits ahead of the
+  skills.
+- Greeting: “Hey! What are you up to today?” with four starter actions.
+- `claude-oss` and `gemma4:31b-cloud` added to the catalogue.
+
+### Changed
+
+- **Skills ship enabled** (caveman, REA, OpenRouter).
+- **Layout is stable on phones**: `100dvh` instead of `vh` (no jump when the URL
+  bar moves), safe-area + native status-bar insets top and bottom, popovers
+  become bottom sheets under 860px, the picker no longer hangs off-screen, and
+  the thread only auto-scrolls when you are already at the bottom.
+- Drawer can open from either side; Escape and backdrop still close it.
+- Typography and spacing tightened for small screens (15px composer input so
+  iOS does not zoom).
+
+### Fixed
+
+- Icon generator scaled marks by width only, cropping the llama's ears and neck;
+  it now fits the mark inside a square box.
+
+---
+
 ## 2026-11-01 — session 3: wire APIs, model discovery, catalogue, redesign
 
 ### Added
