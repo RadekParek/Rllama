@@ -323,12 +323,24 @@ jobs:
 
           # The launcher entry must be the terminal, i.e. the CLI the desktop
           # build exposes, not a custom dashboard.
-          if unzip -p "$apk" AndroidManifest.xml | strings | grep -q "TerminalActivity"; then
-            echo "launcher activity: TerminalActivity"
-          else
-            echo "::error::TerminalActivity is not declared in the packaged manifest"
-            exit 1
+          sdk="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          aapt2="$(ls -1 "$sdk"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1 || true)"
+          launcher=""
+          if [ -n "$aapt2" ]; then
+            launcher="$("$aapt2" dump badging "$apk" 2>/dev/null | grep -m1 "launchable-activity" || true)"
           fi
+          if [ -z "$launcher" ]; then
+            # Binary XML stores class names in a string pool that can be UTF-16,
+            # so look at both encodings before giving up.
+            launcher="$(unzip -p "$apk" AndroidManifest.xml | { strings -a; strings -a -e l; } | grep -m1 "TerminalActivity" || true)"
+          fi
+          case "$launcher" in
+            *TerminalActivity*) echo "launcher: $launcher" ;;
+            *)
+              echo "::error::the launcher activity is not TerminalActivity: ${launcher:-<none>}"
+              exit 1
+              ;;
+          esac
           echo "APK payload verified"
 
       - name: Name the single APK artifact
