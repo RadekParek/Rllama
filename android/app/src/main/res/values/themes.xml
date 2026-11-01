@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.Ollama" parent="Theme.Material3.DayNight.NoActionBar">
-        <item name="android:statusBarColor">?attr/colorPrimary</item>
+    <!-- Platform theme: the app has no AndroidX or Material dependency. -->
+    <style name="Theme.Ollama" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/console_background</item>
+        <item name="android:statusBarColor">#FF0A0A0A</item>
+        <item name="android:navigationBarColor">#FF0A0A0A</item>
     </style>
 </resources>

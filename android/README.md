@@ -23,18 +23,14 @@ The binaries are stored as `lib*.so` because Android only extracts and marks
 executable the APK entries named `lib*.so` in the app's native library
 directory. Everything else about them is a normal Ollama executable.
 
-Sizes of the current build (measured by the `android` workflow on the pushed
-commit, `unzip -v` reports the same numbers for any local build):
-
-| Entry | Uncompressed bytes | In the APK |
-| --- | --- | --- |
-| `lib/arm64-v8a/libollama.so` | 40,585,696 | deflated |
-| `lib/arm64-v8a/libllama-server.so` | 16,169,816 | deflated |
-| `classes*.dex` | ~10,100,000 | deflated |
-| **APK total** | **27,420,158** | ~26 MiB on disk (a few bytes differ between builds: the version string is embedded) |
+Exact sizes are printed by the `android` workflow (`APK size` notice and the
+`Report APK contents` step); `unzip -v app/build/outputs/apk/debug/app-debug.apk`
+shows the same numbers for a local build. Only the two binaries are large:
+`libollama.so` (the Go server/CLI) and `libllama-server.so` (llama.cpp, stripped
+of DWARF debug info).
 
 The APK is deflated, so the installed footprint is roughly the uncompressed
-sum (~67 MB) before any model is pulled. `llama-server` is stripped of DWARF
+sum of the entries (tens of megabytes) before any model is pulled. `llama-server` is stripped of DWARF
 debug info in `scripts/build_android.sh`; that alone took it from 204 MB to
 16 MB without touching anything the loader or the model runner needs.
 
@@ -86,6 +82,16 @@ foreground service, with Ollama's default settings: models in
 `127.0.0.1:11434`. Models are downloaded on demand with `ollama pull` (or
 `ollama create`) and then work offline.
 
+While a command runs, the **Run** button writes the text field to that process's
+stdin, so `ollama run <model>` works interactively.
+
+Threading contract (the reason the app used to crash): payload probing and
+socket checks happen on worker threads, and every listener callback reaches the
+UI on the main thread.
+
+If the process dies, the stack trace is written to `last-crash.txt` in the app's
+private directory and printed at the top of the console on the next launch.
+
 ## Layout
 
 ```
@@ -110,9 +116,9 @@ android/
 | `NativePayload` | Locates the bundled binaries, makes them executable, builds `HOME`/`TMPDIR`/`PATH` |
 | `OllamaManager` | Runs `ollama serve` and console commands, keeps a log ring buffer |
 | `OllamaService` | Foreground service + wake lock so the server survives backgrounding |
-| `TerminalActivity` | The only screen: runs CLI commands through `/system/bin/sh` |
+| `TerminalActivity` | The only screen: runs CLI commands through `/system/bin/sh`, forwards typed lines to the running process
 | `ShellCommand` | Maps `ollama` / `llama-server` tokens to the packaged executables |
-| `App` | Creates the notification channel and the writable directories |
+| `App` | Creates the directories and records the last crash so it can be shown in the console |
 
 ## Go-side changes
 
